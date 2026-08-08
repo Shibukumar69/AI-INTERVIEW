@@ -5,8 +5,6 @@ import dotenv from "dotenv";
 import cors from "cors";
 import { Server } from "socket.io";
 import mongoose from "mongoose";
-import userRoutes from "./routes/userRoutes.js";
-import sessionRoutes from "./routes/sessionRoutes.js";
 import interviewRoutes from "./routes/interviewRoutes.js";
 import { notFound, errorHandler } from "./middleware/errorMiddleware.js";
 
@@ -19,23 +17,14 @@ const connectDB = async () => {
     const conn = await mongoose.connect(mongoUri, { serverSelectionTimeoutMS: 5000 });
     console.log(`✅ MongoDB Atlas Connected: ${conn.connection.host}`);
   } catch (error) {
-    console.warn(`⚠️ MongoDB connection error: ${error.message}. Running in High-Speed In-Memory & Stateless AI Engine Mode.`);
+    console.warn(`⚠️ MongoDB connection warning: ${error.message}. Running in High-Speed In-Memory & Stateless AI Engine Mode.`);
   }
 };
-
 
 connectDB();
 
 const app = express();
 const server = http.createServer(app);
-
-const allowedOrigins = [
-  "http://localhost:5173",
-  "http://localhost:5174",
-  "http://localhost:3000",
-  "http://127.0.0.1:5173",
-  "http://127.0.0.1:5174"
-];
 
 const io = new Server(server, {
   cors: {
@@ -60,10 +49,10 @@ app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 
 app.set("io", io);
 
-// Health and Root
+// Health and Root Endpoint
 app.get("/", (req, res) => {
   res.json({
-    message: "🧠 AI Cohort 31-Day Enterprise AI Interview Agent API",
+    name: "AETHER COHORT // Autonomous Technical Interview Agent",
     status: "online",
     endpoints: [
       "/api/curriculum",
@@ -72,7 +61,8 @@ app.get("/", (req, res) => {
       "/api/interview/chat",
       "/api/interview/evaluate",
       "/api/agent/interview",
-      "/api/config/status"
+      "/api/config/status",
+      "/api/health"
     ]
   });
 });
@@ -80,17 +70,8 @@ app.get("/", (req, res) => {
 // Technical Specification and Cohort Agent Routes
 app.use("/api", interviewRoutes);
 
-// Legacy and Auth Routes
-app.use("/api/users", userRoutes);
-app.use("/api/sessions", sessionRoutes);
-
 io.on("connection", (socket) => {
   console.log(`🔌 Client connected to Socket.io: ${socket.id}`);
-  const userId = socket.handshake.query.userId;
-  if (userId) {
-    socket.join(userId);
-  }
-
   socket.on("disconnect", () => {
     console.log(`🔌 Client disconnected: ${socket.id}`);
   });
@@ -103,7 +84,7 @@ const PORT = process.env.PORT || 5000;
 
 server.on("error", (error) => {
   if (error.code === "EADDRINUSE") {
-    console.error(`❌ Port ${PORT} is already in use by another process. Please close the other terminal or kill the process.`);
+    console.error(`❌ Port ${PORT} is already in use by another process.`);
   } else {
     console.error("Server error:", error.message);
   }
@@ -113,4 +94,3 @@ server.listen(PORT, () => {
   console.log(`🚀 AI Interviewer Server running on port ${PORT}`);
   console.log(`📡 Technical Specification API ready at http://localhost:${PORT}/api/`);
 });
-
