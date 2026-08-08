@@ -1,5 +1,7 @@
 # 🧠 AETHER COHORT // Autonomous Technical Interview Agent
 
+> **Author**: Shibu Kumar ([@Shibukumar69](https://github.com/Shibukumar69))  
+> **Repository**: [https://github.com/Shibukumar69/AI-INTERVIEW](https://github.com/Shibukumar69/AI-INTERVIEW)  
 > **Enterprise AI Cohort Technical Interview Platform & Multi-Turn Evaluation Engine**  
 > Grounded in the 31-Day Enterprise AI Engineering Cohort curriculum (RAG, Vector Databases, Prompt Engineering, Agentic AI, Model Context Protocol, Deployment & Production Systems).
 

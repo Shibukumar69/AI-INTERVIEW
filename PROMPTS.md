@@ -1,5 +1,7 @@
 # 🤖 AI Usage Log & Development Prompt History (PROMPTS.md)
 
+> **Author**: Shibu Kumar ([@Shibukumar69](https://github.com/Shibukumar69))  
+> **Repository**: [https://github.com/Shibukumar69/AI-INTERVIEW](https://github.com/Shibukumar69/AI-INTERVIEW)  
 > **Project**: AETHER COHORT // Autonomous Technical Interview Agent  
 > **Challenge**: 31-Day Enterprise AI Cohort Technical Interview Agent  
 > **Submission Requirement**: Stage 1 & Stage 2 Authenticity Verification and AI Usage Log
