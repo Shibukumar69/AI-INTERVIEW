@@ -43,6 +43,8 @@ ChartJS.register(
   BarElement
 );
 
+import { getApiUrl } from "../config/api";
+
 const SessionReview = () => {
   const { sessionId } = useParams();
   const [report, setReport] = useState(null);
@@ -51,7 +53,7 @@ const SessionReview = () => {
   useEffect(() => {
     const fetchReport = async () => {
       try {
-        const res = await axios.get(`http://localhost:5000/api/interview/${sessionId}/report`);
+        const res = await axios.get(getApiUrl(`/api/interview/${sessionId}/report`));
         if (res.data) setReport(res.data);
       } catch (e) {
         // Fallback default report for synthetic review

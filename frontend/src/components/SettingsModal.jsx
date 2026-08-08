@@ -1,7 +1,7 @@
-// frontend/src/components/SettingsModal.jsx
 import React, { useState, useEffect } from "react";
 import { X, Sparkles, Key, Check, AlertCircle, RefreshCw, Cpu } from "lucide-react";
 import axios from "axios";
+import { getApiUrl } from "../config/api";
 
 const SettingsModal = ({ onClose }) => {
   const [provider, setProvider] = useState("builtin");
@@ -16,7 +16,7 @@ const SettingsModal = ({ onClose }) => {
   useEffect(() => {
     const fetchCurrent = async () => {
       try {
-        const res = await axios.get("http://localhost:5000/api/config/status");
+        const res = await axios.get(getApiUrl("/api/config/status"));
         if (res.data) {
           setProvider(res.data.activeProvider || "builtin");
           if (res.data.ollamaBaseUrl) setOllamaBaseUrl(res.data.ollamaBaseUrl);
@@ -33,7 +33,7 @@ const SettingsModal = ({ onClose }) => {
     e.preventDefault();
     setIsSaving(true);
     try {
-      await axios.post("http://localhost:5000/api/config/update", {
+      await axios.post(getApiUrl("/api/config/update"), {
         provider,
         geminiApiKey: geminiApiKey || undefined,
         openaiApiKey: openaiApiKey || undefined,

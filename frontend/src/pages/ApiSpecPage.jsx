@@ -1,7 +1,4 @@
-// frontend/src/pages/ApiSpecPage.jsx
-import React, { useState } from "react";
-import { Terminal, Play, CheckCircle2, Copy, Check, Sparkles, Code2, Server } from "lucide-react";
-import axios from "axios";
+import { getApiUrl } from "../config/api";
 
 const SPEC_ENDPOINTS = [
   {
@@ -75,7 +72,7 @@ const ApiSpecPage = () => {
     setResponseOutput("Executing request...");
     try {
       let res;
-      const url = `http://localhost:5000${selectedEndpoint.path}`;
+      const url = getApiUrl(selectedEndpoint.path);
       if (selectedEndpoint.method === "GET") {
         res = await axios.get(url);
       } else {
@@ -88,7 +85,7 @@ const ApiSpecPage = () => {
         JSON.stringify(
           {
             error: err.message,
-            response: err.response?.data || "Make sure backend server is running on port 5000."
+            response: err.response?.data || "Make sure backend server is running."
           },
           null,
           2

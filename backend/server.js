@@ -82,15 +82,19 @@ app.use(errorHandler);
 
 const PORT = process.env.PORT || 5000;
 
-server.on("error", (error) => {
-  if (error.code === "EADDRINUSE") {
-    console.error(`❌ Port ${PORT} is already in use by another process.`);
-  } else {
-    console.error("Server error:", error.message);
-  }
-});
+if (!process.env.VERCEL) {
+  server.on("error", (error) => {
+    if (error.code === "EADDRINUSE") {
+      console.error(`❌ Port ${PORT} is already in use by another process.`);
+    } else {
+      console.error("Server error:", error.message);
+    }
+  });
 
-server.listen(PORT, () => {
-  console.log(`🚀 AI Interviewer Server running on port ${PORT}`);
-  console.log(`📡 Technical Specification API ready at http://localhost:${PORT}/api/`);
-});
+  server.listen(PORT, () => {
+    console.log(`🚀 AI Interviewer Server running on port ${PORT}`);
+    console.log(`📡 Technical Specification API ready at http://localhost:${PORT}/api/`);
+  });
+}
+
+export default app;

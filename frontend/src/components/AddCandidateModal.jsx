@@ -2,6 +2,7 @@
 import React, { useState } from "react";
 import { X, UserPlus, Sparkles, Check, Plus, Layers, Target } from "lucide-react";
 import axios from "axios";
+import { getApiUrl } from "../config/api";
 
 const TRACK_PRESETS = [
   "Senior AI Systems Engineer",
@@ -61,7 +62,7 @@ const AddCandidateModal = ({ onClose, onCandidateCreated }) => {
     };
 
     try {
-      const res = await axios.post("http://localhost:5000/api/candidates", payload);
+      const res = await axios.post(getApiUrl("/api/candidates"), payload);
       if (res.data?.candidate) {
         onCandidateCreated(res.data.candidate);
       } else {

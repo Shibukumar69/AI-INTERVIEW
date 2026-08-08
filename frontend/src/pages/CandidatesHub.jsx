@@ -5,6 +5,7 @@ import CandidateCard from "../components/CandidateCard";
 import AddCandidateModal from "../components/AddCandidateModal";
 import { Users, Sparkles, Filter, CheckCircle2, AlertTriangle, ArrowRight, UserPlus } from "lucide-react";
 import axios from "axios";
+import { getApiUrl } from "../config/api";
 
 const CandidatesHub = () => {
   const navigate = useNavigate();
@@ -15,7 +16,7 @@ const CandidatesHub = () => {
   useEffect(() => {
     const fetchCandidates = async () => {
       try {
-        const res = await axios.get("http://localhost:5000/api/candidates");
+        const res = await axios.get(getApiUrl("/api/candidates"));
         if (res.data?.candidates) setCandidates(res.data.candidates);
       } catch (e) {
         console.warn("Using default candidate dataset.");
@@ -34,7 +35,7 @@ const CandidatesHub = () => {
 
   const handleLaunch = async (candidate) => {
     try {
-      const res = await axios.post("http://localhost:5000/api/interview/start", {
+      const res = await axios.post(getApiUrl("/api/interview/start"), {
         candidateId: candidate.id,
         targetDays: candidate.recommendedProbeDays || [1, 6, 15, 24, 28]
       });

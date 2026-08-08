@@ -20,6 +20,7 @@ import {
   ArrowRight
 } from "lucide-react";
 import axios from "axios";
+import { getApiUrl } from "../config/api";
 
 const Dashboard = () => {
   const navigate = useNavigate();
@@ -33,10 +34,10 @@ const Dashboard = () => {
     // Fetch live candidates & past sessions from backend if available
     const fetchData = async () => {
       try {
-        const res = await axios.get("http://localhost:5000/api/candidates");
+        const res = await axios.get(getApiUrl("/api/candidates"));
         if (res.data?.candidates) setCandidates(res.data.candidates);
 
-        const sessRes = await axios.get("http://localhost:5000/api/interview");
+        const sessRes = await axios.get(getApiUrl("/api/interview"));
         if (sessRes.data?.sessions) setPastSessions(sessRes.data.sessions);
       } catch (e) {
         console.warn("Running in local client mode.");
@@ -48,7 +49,7 @@ const Dashboard = () => {
   const handleLaunchInterview = async (candidate = selectedCandidate) => {
     setIsLaunching(true);
     try {
-      const res = await axios.post("http://localhost:5000/api/interview/start", {
+      const res = await axios.post(getApiUrl("/api/interview/start"), {
         candidateId: candidate.id,
         targetDays: candidate.recommendedProbeDays || [1, 6, 15, 24, 28],
         mode: interviewMode

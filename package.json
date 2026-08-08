@@ -1,0 +1,21 @@
+{
+  "name": "aether-cohort-ai-interviewer",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "npm run build --prefix frontend",
+    "start": "node backend/server.js",
+    "dev": "concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\"",
+    "test": "npm run test --prefix backend"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "express-async-handler": "^1.2.0",
+    "mongoose": "^9.0.2",
+    "node-fetch": "^2.7.0",
+    "socket.io": "^4.8.1"
+  }
+}

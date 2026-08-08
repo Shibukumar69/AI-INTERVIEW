@@ -71,7 +71,7 @@ const InterviewRunner = () => {
     const initSession = async () => {
       setIsThinking(true);
       try {
-        const res = await axios.get(`http://localhost:5000/api/interview/${sessionId}`);
+        const res = await axios.get(getApiUrl(`/api/interview/${sessionId}`));
         if (res.data) {
           setCandidate(res.data.candidate || CANDIDATE_PROFILES[0]);
           setTurnCount(res.data.turnCount || 1);
@@ -127,7 +127,7 @@ const InterviewRunner = () => {
     setIsThinking(true);
 
     try {
-      const res = await axios.post("http://localhost:5000/api/interview/chat", {
+      const res = await axios.post(getApiUrl("/api/interview/chat"), {
         sessionId,
         userAnswerText: currentText,
         userCode: currentCode
@@ -200,7 +200,7 @@ const InterviewRunner = () => {
   const handleFinishInterview = async () => {
     setIsThinking(true);
     try {
-      await axios.post("http://localhost:5000/api/interview/evaluate", { sessionId });
+      await axios.post(getApiUrl("/api/interview/evaluate"), { sessionId });
       navigate(`/review/${sessionId}`);
     } catch (e) {
       navigate(`/review/${sessionId}`);

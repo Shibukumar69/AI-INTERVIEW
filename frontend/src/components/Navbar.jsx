@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import SettingsModal from "./SettingsModal";
 import axios from "axios";
+import { getApiUrl } from "../config/api";
 
 const Navbar = () => {
   const location = useLocation();
@@ -23,7 +24,7 @@ const Navbar = () => {
   useEffect(() => {
     const fetchStatus = async () => {
       try {
-        const res = await axios.get("http://localhost:5000/api/config/status");
+        const res = await axios.get(getApiUrl("/api/config/status"));
         if (res.data) {
           if (res.data.geminiConfigured) setActiveProvider("Gemini 1.5 Flash");
           else if (res.data.openaiConfigured) setActiveProvider("OpenAI GPT-4o");
