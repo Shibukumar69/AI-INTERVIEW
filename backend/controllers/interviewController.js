@@ -62,6 +62,65 @@ export const getCandidateById = asyncHandler(async (req, res) => {
   res.json(candidate);
 });
 
+// @desc    Create / Onboard a new candidate profile
+// @route   POST /api/candidates
+// @access  Public
+export const createCandidate = asyncHandler(async (req, res) => {
+  const {
+    name,
+    cohortTrack,
+    experienceLevel,
+    targetRole,
+    summary,
+    completedMissions,
+    skippedTopics,
+    strengths,
+    vulnerabilities,
+    avatar
+  } = req.body;
+
+  if (!name || !cohortTrack) {
+    res.status(400);
+    throw new Error("Candidate name and cohort track are required.");
+  }
+
+  const newId = `candidate-${CANDIDATE_PROFILES.length + 1}`;
+  const newCandidate = {
+    id: newId,
+    name,
+    email: `${name.toLowerCase().replace(/[^a-z0-9]/g, "")}@enterprise-ai.io`,
+    avatar: avatar || `https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=150&auto=format&fit=crop&q=80`,
+    cohortTrack: cohortTrack || "Enterprise AI Systems Engineer",
+    experienceLevel: experienceLevel || "Senior (4+ yrs)",
+    targetRole: targetRole || "AI Infrastructure Engineer",
+    summary: summary || `Cohort graduate specialized in ${cohortTrack}.`,
+    completedMissions: Array.isArray(completedMissions) && completedMissions.length > 0 ? completedMissions : [1, 2, 3, 6, 7, 10, 12, 15, 20, 24, 28],
+    totalMissionsCompleted: Array.isArray(completedMissions) ? completedMissions.length : 11,
+    skippedTopics: Array.isArray(skippedTopics) ? skippedTopics : [],
+    attempts: {
+      1: { count: 1, avgScore: 90, status: "Mastered" },
+      6: { count: 2, avgScore: 88, status: "Completed" },
+      15: { count: 1, avgScore: 92, status: "Mastered" },
+      24: { count: 1, avgScore: 89, status: "Completed" }
+    },
+    learningSignals: {
+      strengths: Array.isArray(strengths) && strengths.length > 0 ? strengths : ["Demonstrates high proficiency in modular AI systems."],
+      vulnerabilities: Array.isArray(vulnerabilities) && vulnerabilities.length > 0 ? vulnerabilities : ["Needs probing on distributed edge cases."],
+      codeHabits: "Writes clean, modular Python and TypeScript code.",
+      velocity: "Strong, consistent cohort progress."
+    },
+    recommendedProbeDays: [1, 6, 15, 24]
+  };
+
+  CANDIDATE_PROFILES.unshift(newCandidate);
+
+  res.status(201).json({
+    message: "New candidate profile onboarded successfully.",
+    candidate: newCandidate
+  });
+});
+
+
 // @desc    Start personalized technical interview
 // @route   POST /api/interview/start
 // @access  Public

@@ -1,15 +1,32 @@
-// frontend/src/pages/CandidatesHub.jsx
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { CANDIDATE_PROFILES } from "../data/candidates";
 import CandidateCard from "../components/CandidateCard";
-import { Users, Sparkles, Filter, CheckCircle2, AlertTriangle, ArrowRight } from "lucide-react";
+import AddCandidateModal from "../components/AddCandidateModal";
+import { Users, Sparkles, Filter, CheckCircle2, AlertTriangle, ArrowRight, UserPlus } from "lucide-react";
 import axios from "axios";
 
 const CandidatesHub = () => {
   const navigate = useNavigate();
-  const [candidates] = useState(CANDIDATE_PROFILES);
+  const [candidates, setCandidates] = useState(CANDIDATE_PROFILES);
   const [filterTrack, setFilterTrack] = useState("all");
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
+  useEffect(() => {
+    const fetchCandidates = async () => {
+      try {
+        const res = await axios.get("http://localhost:5000/api/candidates");
+        if (res.data?.candidates) setCandidates(res.data.candidates);
+      } catch (e) {
+        console.warn("Using default candidate dataset.");
+      }
+    };
+    fetchCandidates();
+  }, []);
+
+  const handleCandidateCreated = (newCand) => {
+    setCandidates((prev) => [newCand, ...prev]);
+  };
 
   const filtered = candidates.filter(
     (c) => filterTrack === "all" || c.cohortTrack.toLowerCase().includes(filterTrack.toLowerCase())
@@ -55,21 +72,31 @@ const CandidatesHub = () => {
             Every candidate's progress through the 31-day AI Cohort has been cataloged with completed missions, attempts count, skipped topics, and learning signals for targeted interview orchestration.
           </p>
 
-          {/* Filter Bar */}
-          <div className="pt-4 flex flex-wrap gap-2">
-            {["all", "Systems", "Agentic", "Infrastructure", "Prompt", "Full-Stack"].map((track) => (
-              <button
-                key={track}
-                onClick={() => setFilterTrack(track)}
-                className={`px-3.5 py-1.5 rounded-xl text-xs font-bold font-mono transition-all ${
-                  filterTrack === track
-                    ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/25"
-                    : "bg-slate-900 text-slate-400 border border-white/5 hover:text-white"
-                }`}
-              >
-                {track === "all" ? "All Tracks" : track + " Focus"}
-              </button>
-            ))}
+          {/* Filter & Add Candidate Bar */}
+          <div className="pt-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="flex flex-wrap gap-2">
+              {["all", "Systems", "Agentic", "Infrastructure", "Prompt", "Full-Stack"].map((track) => (
+                <button
+                  key={track}
+                  onClick={() => setFilterTrack(track)}
+                  className={`px-3.5 py-1.5 rounded-xl text-xs font-bold font-mono transition-all ${
+                    filterTrack === track
+                      ? "bg-cyan-500 text-slate-950 shadow-md shadow-cyan-500/25"
+                      : "bg-slate-900 text-slate-400 border border-white/5 hover:text-white"
+                  }`}
+                >
+                  {track === "all" ? "All Tracks" : track + " Focus"}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={() => setIsAddModalOpen(true)}
+              className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-cyan-500/20 active:scale-95 transition-all self-start sm:self-auto"
+            >
+              <UserPlus className="w-4 h-4 text-slate-950" />
+              <span>+ Onboard Candidate</span>
+            </button>
           </div>
 
         </div>
@@ -86,6 +113,14 @@ const CandidatesHub = () => {
           />
         ))}
       </div>
+
+      {/* Onboard Modal */}
+      {isAddModalOpen && (
+        <AddCandidateModal
+          onClose={() => setIsAddModalOpen(false)}
+          onCandidateCreated={handleCandidateCreated}
+        />
+      )}
 
     </div>
   );

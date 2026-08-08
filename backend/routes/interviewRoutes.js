@@ -5,6 +5,7 @@ import {
   getCurriculumDay,
   getCandidates,
   getCandidateById,
+  createCandidate,
   startInterview,
   chatTurn,
   evaluateInterview,
@@ -25,6 +26,7 @@ router.get("/curriculum/:day", getCurriculumDay);
 // Candidate Profiles Endpoints
 router.get("/candidates", getCandidates);
 router.get("/candidates/:id", getCandidateById);
+router.post("/candidates", createCandidate);
 
 // Interview Lifecycle Endpoints
 router.post("/interview/start", startInterview);
