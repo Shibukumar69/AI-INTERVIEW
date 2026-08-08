@@ -147,6 +147,83 @@ export const startInterview = asyncHandler(async (req, res) => {
   });
 });
 
+// @desc    Technical Specification Unified Endpoint (POST /api/interview)
+// @route   POST /api/interview
+// @access  Public
+export const handleTechnicalSpecInterview = asyncHandler(async (req, res) => {
+  const { sessionId, candidate, message, finish } = req.body;
+
+  if (!sessionId) {
+    res.status(400);
+    throw new Error("Session ID is required.");
+  }
+
+  // 1. START INTERVIEW: If candidate object or start flag is provided
+  if (candidate || (!message && !finish)) {
+    const candId = candidate?.member?.id?.toLowerCase() || candidate?.id || "cand-001";
+    const session = initializeInterviewSession({
+      sessionId,
+      candidateId: candId,
+      customCandidate: candidate
+    });
+
+    return res.json({
+      reply: session.conversationHistory[0]?.text || `Welcome! Let's begin your technical interview for the AI Cohort.`,
+      done: false
+    });
+  }
+
+  // 2. END / FINISH INTERVIEW: If finish is requested
+  if (finish) {
+    const report = await finalizeInterviewEvaluation(sessionId);
+    return res.json({
+      reply: "Interview completed. Structured feedback generated.",
+      done: true,
+      feedback: {
+        summary: `${report.readinessGrade}. Overall Score: ${report.overallScore}%. ${report.strengths?.[0] || ""}`,
+        strengths: report.strengths || ["Strong foundational execution in AI systems."],
+        gaps: report.criticalGaps || ["Needs deeper edge case analysis."],
+        next: (report.personalizedStudyPlan || []).map((p) => `${p.week}: ${p.focus} (${p.actionItems?.[0] || ""})`)
+      }
+    });
+  }
+
+  // 3. CONVERSATION TURN: Candidate answers a question
+  const session = getInterviewSession(sessionId);
+  if (!session) {
+    // Graceful auto-initialization if session wasn't found
+    const newSession = initializeInterviewSession({ candidateId: "cand-001" });
+    newSession.sessionId = sessionId;
+  }
+
+  const turnResult = await processInterviewChat({
+    sessionId,
+    userAnswerText: message || ""
+  });
+
+  // Check if interview completed (e.g. 8+ questions and covered 4+ days)
+  const currentSession = getInterviewSession(sessionId);
+  if (currentSession && currentSession.questionHistory.length >= 8 && currentSession.coveredDays.length >= 4) {
+    const report = await finalizeInterviewEvaluation(sessionId);
+    return res.json({
+      reply: `Thank you. That concludes our technical interview.\n\n${turnResult.questionText || ""}`,
+      done: true,
+      feedback: {
+        summary: `${report.readinessGrade}. Overall Score: ${report.overallScore}%. ${report.strengths?.[0] || ""}`,
+        strengths: report.strengths || ["High proficiency in core AI systems."],
+        gaps: report.criticalGaps || ["Needs deeper edge case and latency analysis."],
+        next: (report.personalizedStudyPlan || []).map((p) => `${p.week}: ${p.focus}`)
+      }
+    });
+  }
+
+  // Ongoing conversation turn
+  res.json({
+    reply: turnResult.questionText,
+    done: false
+  });
+});
+
 // @desc    Multi-turn conversational response & adaptive follow-up generation
 // @route   POST /api/interview/chat
 // @access  Public

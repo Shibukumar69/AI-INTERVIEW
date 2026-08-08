@@ -87,7 +87,7 @@ async function runApiTests() {
     const resCurriculum = await testEndpoint("GET /api/curriculum", `${BASE}/api/curriculum`);
     results.push({
       test: "Curriculum All Days (GET /api/curriculum)",
-      passed: resCurriculum.status === 200 && resCurriculum.data.totalDays === 31 && resCurriculum.data.totalModules === 7,
+      passed: resCurriculum.status === 200 && resCurriculum.data.totalDays === 31 && resCurriculum.data.totalModules === 8,
       status: resCurriculum.status,
       latency: `${resCurriculum.elapsed}ms`,
       details: `Total Days: ${resCurriculum.data?.totalDays}, Total Modules: ${resCurriculum.data?.totalModules}`
@@ -98,7 +98,7 @@ async function runApiTests() {
     const resDay1 = await testEndpoint("GET /api/curriculum/1", `${BASE}/api/curriculum/1`);
     results.push({
       test: "Curriculum Day 1 (GET /api/curriculum/1)",
-      passed: resDay1.status === 200 && resDay1.data.day === 1 && resDay1.data.keyConcepts?.length > 0,
+      passed: resDay1.status === 200 && resDay1.data.day === 1 && resDay1.data.objectives?.length > 0,
       status: resDay1.status,
       latency: `${resDay1.elapsed}ms`,
       details: `Topic: ${resDay1.data?.topic}`
@@ -120,18 +120,18 @@ async function runApiTests() {
     const resCandidates = await testEndpoint("GET /api/candidates", `${BASE}/api/candidates`);
     results.push({
       test: "Candidates List (GET /api/candidates)",
-      passed: resCandidates.status === 200 && resCandidates.data.totalCandidates >= 1,
+      passed: resCandidates.status === 200 && resCandidates.data.totalCandidates >= 5,
       status: resCandidates.status,
       latency: `${resCandidates.elapsed}ms`,
       details: `Candidates found: ${resCandidates.data?.totalCandidates}`
     });
 
     // 7. Candidates - Get By ID
-    console.log("7️⃣ Testing GET /api/candidates/candidate-1 ...");
-    const resCand1 = await testEndpoint("GET /api/candidates/candidate-1", `${BASE}/api/candidates/candidate-1`);
+    console.log("7️⃣ Testing GET /api/candidates/cand-001 ...");
+    const resCand1 = await testEndpoint("GET /api/candidates/cand-001", `${BASE}/api/candidates/cand-001`);
     results.push({
-      test: "Candidate Details (GET /api/candidates/candidate-1)",
-      passed: resCand1.status === 200 && resCand1.data.name?.length > 0,
+      test: "Candidate Details (GET /api/candidates/cand-001)",
+      passed: resCand1.status === 200 && resCand1.data.name === "Sarah Johnson",
       status: resCand1.status,
       latency: `${resCand1.elapsed}ms`,
       details: `Name: ${resCand1.data?.name}, Role: ${resCand1.data?.targetRole}`
@@ -271,13 +271,54 @@ async function runApiTests() {
       details: `Radar Modules: ${resGetReport.data?.radarChartData?.length || 0}, Study Plan Items: ${resGetReport.data?.personalizedStudyPlan?.length || 0}`
     });
 
-    // 16. Technical Specification All-in-One Benchmark Runner (POST /api/agent/interview)
-    console.log("1️⃣6️⃣ Testing POST /api/agent/interview (Benchmark Runner) ...");
+    // 16. Official Technical Spec Endpoint Flow (POST /api/interview)
+    console.log("1️⃣6️⃣ Testing Official Technical Specification Flow (POST /api/interview) ...");
+    const testSpecSessionId = "session_spec_test_" + Date.now();
+    const specStartRes = await testEndpoint("POST /api/interview (Start)", `${BASE}/api/interview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: testSpecSessionId,
+        candidate: resCand1.data
+      })
+    });
+    const specTurnRes = await testEndpoint("POST /api/interview (Turn)", `${BASE}/api/interview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: testSpecSessionId,
+        message: "In Day 7, we converted healthcare documents into Sentence Transformer embeddings with ChromaDB cosine similarity."
+      })
+    });
+    const specFinishRes = await testEndpoint("POST /api/interview (Finish)", `${BASE}/api/interview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionId: testSpecSessionId,
+        finish: true
+      })
+    });
+
+    results.push({
+      test: "Technical Spec Contract (POST /api/interview - Start, Turn & Feedback)",
+      passed: specStartRes.status === 200 && specStartRes.data?.done === false &&
+              specTurnRes.status === 200 && specTurnRes.data?.done === false &&
+              specFinishRes.status === 200 && specFinishRes.data?.done === true &&
+              Array.isArray(specFinishRes.data?.feedback?.strengths) &&
+              Array.isArray(specFinishRes.data?.feedback?.gaps) &&
+              Array.isArray(specFinishRes.data?.feedback?.next),
+      status: specFinishRes.status,
+      latency: `${specFinishRes.elapsed}ms`,
+      details: `Strengths: ${specFinishRes.data?.feedback?.strengths?.length}, Gaps: ${specFinishRes.data?.feedback?.gaps?.length}, Next: ${specFinishRes.data?.feedback?.next?.length}`
+    });
+
+    // 17. Technical Specification All-in-One Benchmark Runner (POST /api/agent/interview)
+    console.log("1️⃣7️⃣ Testing POST /api/agent/interview (Benchmark Runner) ...");
     const resBenchmark = await testEndpoint("POST /api/agent/interview", `${BASE}/api/agent/interview`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        candidateId: "candidate-1",
+        candidateId: "cand-001",
         simulateTurns: 8
       })
     });

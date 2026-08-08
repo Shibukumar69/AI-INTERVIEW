@@ -13,11 +13,15 @@ import {
   getSessionReport,
   listAllSessions,
   technicalSpecRunner,
+  handleTechnicalSpecInterview,
   getConfigStatus,
   updateConfig
 } from "../controllers/interviewController.js";
 
 const router = express.Router();
+
+// Technical Specification Unified Contract (POST /api/interview)
+router.post("/interview", handleTechnicalSpecInterview);
 
 // Curriculum Endpoints
 router.get("/curriculum", getCurriculum);

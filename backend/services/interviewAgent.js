@@ -24,12 +24,17 @@ export const aiConfig = {
  * Initialize a new interview session
  */
 export function initializeInterviewSession({
-  candidateId = "candidate-1",
+  sessionId: providedSessionId = null,
+  candidateId = "cand-001",
+  customCandidate = null,
   targetDays = null,
   customInstructions = "",
   mode = "adaptive"
 }) {
-  const candidate = CANDIDATE_PROFILES.find((c) => c.id === candidateId) || CANDIDATE_PROFILES[0];
+  let candidate = customCandidate;
+  if (!candidate) {
+    candidate = CANDIDATE_PROFILES.find((c) => c.id === candidateId || c.officialId === candidateId) || CANDIDATE_PROFILES[0];
+  }
 
   // Pick at least 4-5 target curriculum days across distinct modules if not specified
   let selectedDays = targetDays;
@@ -37,15 +42,15 @@ export function initializeInterviewSession({
     if (candidate.recommendedProbeDays && candidate.recommendedProbeDays.length >= 4) {
       selectedDays = candidate.recommendedProbeDays;
     } else {
-      // Pick 1 day from each of at least 4 modules (e.g. Day 1, Day 6, Day 15, Day 24, Day 28)
-      selectedDays = [1, 6, 15, 24, 28];
+      // Pick 1 day from each of at least 4 modules (e.g. Day 1, Day 7, Day 12, Day 22, Day 28)
+      selectedDays = [1, 7, 12, 22, 28];
     }
   }
 
   // Ensure selected days are unique and sorted
   selectedDays = Array.from(new Set(selectedDays));
 
-  const sessionId = "session_" + Date.now() + "_" + Math.random().toString(36).substring(2, 8);
+  const sessionId = providedSessionId || "session_" + Date.now() + "_" + Math.random().toString(36).substring(2, 8);
 
   const initialDayNumber = selectedDays[0] || 1;
   const initialCurriculumDay = CURRICULUM_DAYS.find((d) => d.day === initialDayNumber) || CURRICULUM_DAYS[0];
