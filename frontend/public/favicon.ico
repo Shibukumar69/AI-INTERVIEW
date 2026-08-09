@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="cyber-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#06b6d4" />
+      <stop offset="50%" stop-color="#6366f1" />
+      <stop offset="100%" stop-color="#a855f7" />
+    </linearGradient>
+    <linearGradient id="glow-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.9" />
+      <stop offset="100%" stop-color="#c084fc" stop-opacity="0.4" />
+    </linearGradient>
+    <radialGradient id="center-glow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#06b6d4" stop-opacity="0.4" />
+      <stop offset="100%" stop-color="#070a12" stop-opacity="0" />
+    </radialGradient>
+    <filter id="neon-glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Background Base -->
+  <rect width="64" height="64" rx="18" fill="#070a12" />
+  <rect width="64" height="64" rx="18" fill="url(#center-glow)" />
+  
+  <!-- Outer Border Ring -->
+  <rect x="2" y="2" width="60" height="60" rx="16" stroke="url(#cyber-grad)" stroke-width="2" stroke-opacity="0.85" />
+
+  <!-- Corner Cyber Nodes -->
+  <circle cx="10" cy="10" r="1.5" fill="#06b6d4" />
+  <circle cx="54" cy="10" r="1.5" fill="#a855f7" />
+  <circle cx="10" cy="54" r="1.5" fill="#a855f7" />
+  <circle cx="54" cy="54" r="1.5" fill="#06b6d4" />
+
+  <!-- Neural AI Brain Circuit Icon -->
+  <g filter="url(#neon-glow)" transform="translate(0, 0)">
+    <!-- Central Brain Hemispheres & Neural Connections -->
+    <!-- Left Hemisphere -->
+    <path d="M28 17 C21 17 17 22 17 28 C17 31 18.5 33.5 20.5 35 C18.5 37 17.5 40 18.5 43.5 C19.5 47 23 49 27.5 48 C28.5 48 29.5 47.5 30 47" 
+          stroke="url(#cyber-grad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+    
+    <!-- Right Hemisphere -->
+    <path d="M36 17 C43 17 47 22 47 28 C47 31 45.5 33.5 43.5 35 C45.5 37 46.5 40 45.5 43.5 C44.5 47 41 49 36.5 48 C35.5 48 34.5 47.5 34 47" 
+          stroke="url(#cyber-grad)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+
+    <!-- Central Neural Axis -->
+    <line x1="32" y1="18" x2="32" y2="46" stroke="#22d3ee" stroke-width="2" stroke-linecap="round" />
+    
+    <!-- Synaptic Connectors -->
+    <line x1="24" y1="28" x2="32" y2="28" stroke="#a855f7" stroke-width="1.8" stroke-linecap="round" />
+    <line x1="32" y1="28" x2="40" y2="28" stroke="#06b6d4" stroke-width="1.8" stroke-linecap="round" />
+    <line x1="23" y1="38" x2="32" y2="38" stroke="#06b6d4" stroke-width="1.8" stroke-linecap="round" />
+    <line x1="32" y1="38" x2="41" y2="38" stroke="#a855f7" stroke-width="1.8" stroke-linecap="round" />
+
+    <!-- Radiant Glowing Synapse Nodes -->
+    <circle cx="32" cy="18" r="2.5" fill="#22d3ee" />
+    <circle cx="32" cy="28" r="2" fill="#ffffff" />
+    <circle cx="32" cy="38" r="2" fill="#ffffff" />
+    <circle cx="32" cy="46" r="2.5" fill="#c084fc" />
+    
+    <circle cx="24" cy="28" r="1.8" fill="#22d3ee" />
+    <circle cx="40" cy="28" r="1.8" fill="#c084fc" />
+    <circle cx="23" cy="38" r="1.8" fill="#c084fc" />
+    <circle cx="41" cy="38" r="1.8" fill="#22d3ee" />
+  </g>
+</svg>

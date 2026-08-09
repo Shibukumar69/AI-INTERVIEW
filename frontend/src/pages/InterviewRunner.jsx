@@ -73,7 +73,13 @@ const InterviewRunner = () => {
   // Find candidate matched by session or default
   const getInitialCandidate = () => {
     if (!sessionId) return CANDIDATE_PROFILES[0];
-    const cand = CANDIDATE_PROFILES.find((c) => sessionId.toLowerCase().includes(c.id.toLowerCase()));
+    const cleanId = sessionId.toLowerCase();
+    const cand = CANDIDATE_PROFILES.find(
+      (c) =>
+        cleanId.includes(c.id.toLowerCase()) ||
+        cleanId.includes(c.officialId.toLowerCase()) ||
+        cleanId.includes(c.name.toLowerCase().replace(/[^a-z0-9]/g, ""))
+    );
     return cand || CANDIDATE_PROFILES[0];
   };
 

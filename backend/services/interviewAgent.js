@@ -50,7 +50,7 @@ export function initializeInterviewSession({
   // Ensure selected days are unique and sorted
   selectedDays = Array.from(new Set(selectedDays));
 
-  const sessionId = providedSessionId || "session_" + Date.now() + "_" + Math.random().toString(36).substring(2, 8);
+  const sessionId = providedSessionId || "session_" + (candidate.id || "cand-001") + "_" + Date.now() + "_" + Math.random().toString(36).substring(2, 6);
 
   const initialDayNumber = selectedDays[0] || 1;
   const initialCurriculumDay = CURRICULUM_DAYS.find((d) => d.day === initialDayNumber) || CURRICULUM_DAYS[0];
