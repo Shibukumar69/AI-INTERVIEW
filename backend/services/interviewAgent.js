@@ -9,13 +9,13 @@ const interviewSessions = new Map();
 
 // Configuration store for API keys and provider selection
 export const aiConfig = {
-  activeProvider: process.env.AI_PROVIDER || "builtin", // "builtin" | "gemini" | "openai" | "groq" | "ollama"
+  activeProvider: process.env.AI_PROVIDER || (process.env.GEMINI_API_KEY ? "gemini" : process.env.GROQ_API_KEY ? "groq" : process.env.OPENAI_API_KEY ? "openai" : "builtin"),
   geminiApiKey: process.env.GEMINI_API_KEY || "",
   geminiModel: process.env.GEMINI_MODEL || "gemini-1.5-flash",
   openaiApiKey: process.env.OPENAI_API_KEY || "",
   openaiModel: process.env.OPENAI_MODEL || "gpt-4o-mini",
   groqApiKey: process.env.GROQ_API_KEY || "",
-  groqModel: process.env.GROQ_MODEL || "llama-3.1-70b-versatile",
+  groqModel: process.env.GROQ_MODEL || "llama-3.3-70b-versatile",
   ollamaBaseUrl: process.env.OLLAMA_BASE_URL || "http://localhost:11434",
   ollamaModel: process.env.OLLAMA_MODEL_NAME || "mistral"
 };
@@ -42,8 +42,7 @@ export function initializeInterviewSession({
     if (candidate.recommendedProbeDays && candidate.recommendedProbeDays.length >= 4) {
       selectedDays = candidate.recommendedProbeDays;
     } else {
-      // Pick 1 day from each of at least 4 modules (e.g. Day 1, Day 7, Day 12, Day 22, Day 28)
-      selectedDays = [1, 7, 12, 22, 28];
+      selectedDays = [1, 6, 12, 22, 28];
     }
   }
 
@@ -58,6 +57,9 @@ export function initializeInterviewSession({
   // Select initial question tailored to candidate
   const initialQuestionText = getInitialQuestionForDay(initialCurriculumDay, candidate);
 
+  // Set of asked question texts/hashes to strictly avoid repeating questions
+  const askedQuestions = new Set([normalizeQuestionText(initialQuestionText)]);
+
   const session = {
     sessionId,
     candidateId: candidate.id,
@@ -70,6 +72,7 @@ export function initializeInterviewSession({
     consecutiveFollowUpsOnCurrentDay: 0,
     maxFollowUpsPerDay: 2,
     coveredDays: [initialDayNumber],
+    askedQuestions,
     questionHistory: [
       {
         questionId: "q_1",
@@ -91,6 +94,7 @@ export function initializeInterviewSession({
       {
         role: "interviewer",
         text: `Welcome ${candidate.name}! We're conducting your 31-Day Enterprise AI Cohort Technical Interview. Let's begin with your work on Day ${initialDayNumber} (${initialCurriculumDay.topic}):\n\n${initialQuestionText}`,
+        questionText: initialQuestionText,
         dayNumber: initialDayNumber,
         isFollowUp: false,
         timestamp: new Date()
@@ -99,7 +103,7 @@ export function initializeInterviewSession({
     turnCount: 1,
     minRequiredQuestions: 8,
     minRequiredDays: 4,
-    status: "in-progress", // "in-progress" | "completed"
+    status: "in-progress",
     startTime: new Date(),
     endTime: null,
     evaluationReport: null
@@ -118,9 +122,9 @@ export async function processInterviewChat({
   userCode = "",
   audioTranscription = ""
 }) {
-  const session = interviewSessions.get(sessionId);
+  let session = interviewSessions.get(sessionId);
   if (!session) {
-    throw new Error(`Interview session '${sessionId}' not found.`);
+    session = initializeInterviewSession({ sessionId, candidateId: "candidate-1" });
   }
 
   const combinedAnswer = (userAnswerText || audioTranscription || "").trim();
@@ -139,13 +143,14 @@ export async function processInterviewChat({
     timestamp: new Date()
   });
 
-  // Evaluate the candidate's turn
+  // Evaluate candidate's turn with deep strict AI
   const turnEval = await evaluateSingleTurn({
     question: currentQ.questionText,
     answer: combinedAnswer,
     code: userCode,
     dayNumber: session.currentDayNumber,
-    candidate: session.candidate
+    candidate: session.candidate,
+    session
   });
 
   currentQ.evaluation = turnEval;
@@ -167,7 +172,6 @@ export async function processInterviewChat({
   let parentQuestionId = null;
 
   if (shouldFollowUp) {
-    // Generate intelligent follow-up question probing deeper into their answer
     isFollowUp = true;
     parentQuestionId = currentQ.questionId;
     session.consecutiveFollowUpsOnCurrentDay += 1;
@@ -178,18 +182,17 @@ export async function processInterviewChat({
       candidateCode: userCode,
       dayNumber: session.currentDayNumber,
       candidate: session.candidate,
-      conversationHistory: session.conversationHistory
+      session,
+      turnEval
     });
   } else {
     // Transition to the next curriculum day
     session.consecutiveFollowUpsOnCurrentDay = 0;
     session.currentDayIndex += 1;
 
-    // Pick next day from target days or cycle through available 31 days
     if (session.currentDayIndex < session.targetDays.length) {
       nextDayNumber = session.targetDays[session.currentDayIndex];
     } else {
-      // Pick another day that hasn't been covered yet
       const allDays = CURRICULUM_DAYS.map((d) => d.day);
       const uncovered = allDays.filter((d) => !session.coveredDays.includes(d));
       nextDayNumber = uncovered.length > 0 ? uncovered[0] : (session.currentDayNumber % 31) + 1;
@@ -204,8 +207,13 @@ export async function processInterviewChat({
     nextQuestionText = await generateNextDayQuestion({
       curriculumDay: nextCurriculumDay,
       candidate: session.candidate,
-      previousAnswers: session.questionHistory
+      session
     });
+  }
+
+  // Register question to prevent future duplicates
+  if (session.askedQuestions) {
+    session.askedQuestions.add(normalizeQuestionText(nextQuestionText));
   }
 
   const nextQId = `q_${session.questionHistory.length + 1}`;
@@ -230,13 +238,15 @@ export async function processInterviewChat({
   session.questionHistory.push(newQuestionObj);
   session.turnCount = session.questionHistory.length;
 
-  session.conversationHistory.push({
+  const interviewerMsg = {
     role: "interviewer",
     text: nextQuestionText,
+    questionText: nextQuestionText,
     dayNumber: nextDayNumber,
     isFollowUp,
     timestamp: new Date()
-  });
+  };
+  session.conversationHistory.push(interviewerMsg);
 
   return {
     sessionId: session.sessionId,
@@ -247,11 +257,15 @@ export async function processInterviewChat({
     moduleTitle: nextCurriculumDay.moduleTitle,
     topic: nextCurriculumDay.topic,
     questionText: nextQuestionText,
+    nextQuestionText: nextQuestionText,
+    interviewerText: nextQuestionText,
+    reply: nextQuestionText,
     coveredDays: session.coveredDays,
     coveredDaysCount: session.coveredDays.length,
     minDaysMet: session.coveredDays.length >= session.minRequiredDays,
     minQuestionsMet: session.questionHistory.length >= session.minRequiredQuestions,
     lastTurnEvaluation: turnEval,
+    evaluation: turnEval,
     conversationHistory: session.conversationHistory
   };
 }
@@ -260,9 +274,9 @@ export async function processInterviewChat({
  * Conclude interview and generate structured diagnostic feedback
  */
 export async function finalizeInterviewEvaluation(sessionId) {
-  const session = interviewSessions.get(sessionId);
+  let session = interviewSessions.get(sessionId);
   if (!session) {
-    throw new Error(`Interview session '${sessionId}' not found.`);
+    session = initializeInterviewSession({ sessionId, candidateId: "candidate-1" });
   }
 
   session.status = "completed";
@@ -277,27 +291,28 @@ export async function finalizeInterviewEvaluation(sessionId) {
   let totalEdgeScore = 0;
   let totalCommScore = 0;
 
-  // Track scores by 7 modules
+  // Track scores by 8 modules
   const moduleScores = {
-    1: { name: "RAG & Document Pipelines", total: 0, count: 0 },
-    2: { name: "Vector DBs & High-Scale Indexing", total: 0, count: 0 },
-    3: { name: "Prompting & Structured Outputs", total: 0, count: 0 },
-    4: { name: "Agentic AI & Autonomous Systems", total: 0, count: 0 },
-    5: { name: "Model Context Protocol (MCP)", total: 0, count: 0 },
-    6: { name: "AI Deployment & Serving", total: 0, count: 0 },
-    7: { name: "Production AI Systems & Guardrails", total: 0, count: 0 }
+    1: { name: "Environment & Tooling", total: 0, count: 0 },
+    2: { name: "Data Foundations", total: 0, count: 0 },
+    3: { name: "Embeddings & Vector Search", total: 0, count: 0 },
+    4: { name: "LLM Core & Fine-Tuning", total: 0, count: 0 },
+    5: { name: "Chatbot Application Build", total: 0, count: 0 },
+    6: { name: "Agentic AI & MCP", total: 0, count: 0 },
+    7: { name: "Evaluation & Deployment", total: 0, count: 0 },
+    8: { name: "Production & Capstone", total: 0, count: 0 }
   };
 
   evaluatedQuestions.forEach((q) => {
     const e = q.evaluation;
-    totalTechScore += e.technicalScore || 0;
-    totalArchScore += e.architectureScore || 0;
-    totalEdgeScore += e.edgeCaseScore || 0;
-    totalCommScore += e.communicationScore || 0;
+    totalTechScore += (e.technicalScore !== undefined ? e.technicalScore : 50);
+    totalArchScore += (e.architectureScore !== undefined ? e.architectureScore : 50);
+    totalEdgeScore += (e.edgeCaseScore !== undefined ? e.edgeCaseScore : 30);
+    totalCommScore += (e.communicationScore !== undefined ? e.communicationScore : 50);
 
     const modId = q.moduleNumber || 1;
     if (moduleScores[modId]) {
-      moduleScores[modId].total += e.technicalScore || 0;
+      moduleScores[modId].total += (e.technicalScore !== undefined ? e.technicalScore : 50);
       moduleScores[modId].count += 1;
     }
   });
@@ -309,23 +324,25 @@ export async function finalizeInterviewEvaluation(sessionId) {
 
   const overallScore = Math.round(avgTech * 0.4 + avgArch * 0.3 + avgEdge * 0.2 + avgComm * 0.1);
 
-  // Determine Enterprise Readiness Grade
-  let readinessGrade = "L4 Full-Stack AI Engineer";
+  // Determine Enterprise Readiness Grade strictly based on overallScore
+  let readinessGrade = "Junior Cohort Apprentice (Needs Reinforcement)";
   if (overallScore >= 90) {
     readinessGrade = "L6 Staff AI Architect & Systems Lead";
   } else if (overallScore >= 80) {
     readinessGrade = "L5 Senior AI Systems Engineer";
   } else if (overallScore >= 70) {
     readinessGrade = "L4 Enterprise AI Software Engineer";
-  } else if (overallScore >= 60) {
+  } else if (overallScore >= 55) {
     readinessGrade = "L3 Associate AI Engineer";
+  } else if (overallScore >= 35) {
+    readinessGrade = "Early Cohort Student (Foundations Required)";
   } else {
-    readinessGrade = "Junior Cohort Apprentice (Needs Reinforcement)";
+    readinessGrade = "Not Recommended (Failed Technical Verification)";
   }
 
   // Format module breakdown for Radar / Bar Chart
   const radarChartData = Object.entries(moduleScores).map(([modId, modData]) => {
-    const calculatedScore = modData.count > 0 ? Math.round(modData.total / modData.count) : Math.max(60, avgTech - 5);
+    const calculatedScore = modData.count > 0 ? Math.round(modData.total / modData.count) : Math.max(10, avgTech - 5);
     return {
       moduleId: parseInt(modId),
       moduleName: modData.name,
@@ -334,29 +351,44 @@ export async function finalizeInterviewEvaluation(sessionId) {
     };
   });
 
-  // Extract strengths & critical gaps based on candidate responses and skipped topics
+  // Extract strengths & critical gaps
   const candidate = session.candidate;
   const verifiedStrengths = [];
   const criticalGaps = [];
 
-  if (avgTech >= 80) {
-    verifiedStrengths.push("Strong fundamental mastery of core AI engineering principles and algorithmic trade-offs.");
-  }
-  if (avgArch >= 80) {
-    verifiedStrengths.push("Clear architectural intuition for system scalability, latency budgets, and cost governance.");
-  }
-  if (candidate.learningSignals?.strengths) {
-    verifiedStrengths.push(...candidate.learningSignals.strengths.slice(0, 2));
+  evaluatedQuestions.forEach((q) => {
+    if (q.evaluation?.strengthsIdentified && Array.isArray(q.evaluation.strengthsIdentified)) {
+      q.evaluation.strengthsIdentified.forEach((s) => {
+        if (s && !verifiedStrengths.includes(s) && verifiedStrengths.length < 4) {
+          verifiedStrengths.push(s);
+        }
+      });
+    }
+  });
+
+  evaluatedQuestions.forEach((q) => {
+    if (q.evaluation?.gapsIdentified && Array.isArray(q.evaluation.gapsIdentified)) {
+      q.evaluation.gapsIdentified.forEach((g) => {
+        if (g && !criticalGaps.includes(g) && criticalGaps.length < 4) {
+          criticalGaps.push(g);
+        }
+      });
+    }
+  });
+
+  if (verifiedStrengths.length === 0 && overallScore >= 60) {
+    verifiedStrengths.push("Demonstrated basic conceptual familiarity with AI engineering topics.");
+  } else if (verifiedStrengths.length === 0) {
+    verifiedStrengths.push("No verified technical strengths identified during this session.");
   }
 
-  if (candidate.skippedTopics && candidate.skippedTopics.length > 0) {
-    criticalGaps.push(`Gaps identified in skipped curriculum missions: ${candidate.skippedTopics.slice(0, 2).map((t) => `Day ${t.day} (${t.topic})`).join(", ")}.`);
-  }
-  if (avgEdge < 75) {
-    criticalGaps.push("Needs deeper edge-case analysis when dealing with unexpected tool failures, network timeouts, and schema validation errors.");
-  }
-  if (candidate.learningSignals?.vulnerabilities) {
-    criticalGaps.push(...candidate.learningSignals.vulnerabilities.slice(0, 2));
+  if (criticalGaps.length === 0) {
+    if (avgEdge < 60) {
+      criticalGaps.push("Critical gap in edge-case handling, failure recovery, and circuit breaker policies.");
+    }
+    if (avgTech < 60) {
+      criticalGaps.push("Needs significant reinforcement on core algorithmic principles and implementation specifics.");
+    }
   }
 
   const report = {
@@ -403,12 +435,12 @@ export async function finalizeInterviewEvaluation(sessionId) {
       candidateResponse: q.userResponse,
       candidateCode: q.userCode,
       evaluation: q.evaluation || {
-        technicalScore: 70,
-        architectureScore: 70,
-        edgeCaseScore: 70,
-        communicationScore: 70,
-        feedback: "Completed without detailed critique.",
-        idealEngineeringAnswer: "Standard enterprise implementation."
+        technicalScore: 10,
+        architectureScore: 10,
+        edgeCaseScore: 0,
+        communicationScore: 20,
+        feedback: "No evaluation recorded for this turn.",
+        idealEngineeringAnswer: "Production implementation requires explicit architecture and failure handling."
       }
     })),
     completedAt: session.endTime
@@ -436,16 +468,20 @@ export function getAllInterviewSessions() {
 // INTERNAL INTELLIGENT HELPER FUNCTIONS
 // -------------------------------------------------------------
 
+function normalizeQuestionText(qText) {
+  if (!qText) return "";
+  return qText.toLowerCase().replace(/[^a-z0-9]/g, " ").trim().replace(/\s+/g, " ");
+}
+
 function getInitialQuestionForDay(curriculumDay, candidate) {
   if (curriculumDay.sampleQuestions && curriculumDay.sampleQuestions.length > 0) {
-    // If candidate had attempts on this day, customize question
     const attemptInfo = candidate.attempts?.[curriculumDay.day];
     if (attemptInfo && attemptInfo.count > 1) {
-      return `Welcome ${candidate.name}. In Day ${curriculumDay.day} (${curriculumDay.topic}), you worked extensively on this module with ${attemptInfo.count} iteration attempts. Can you explain the core architectural challenges you encountered and how you optimized your final implementation?`;
+      return `Welcome ${candidate.name}. In Day ${curriculumDay.day} (${curriculumDay.topic}), you worked on this module with ${attemptInfo.count} iteration attempts. Can you explain the core architectural trade-offs you encountered and how you optimized your final implementation?`;
     }
     return curriculumDay.sampleQuestions[0];
   }
-  return `Explain the core engineering concepts and trade-offs you implemented in Day ${curriculumDay.day} (${curriculumDay.topic}).`;
+  return `In Day ${curriculumDay.day} (${curriculumDay.topic}), walk me through your technical implementation and the critical engineering decisions you made.`;
 }
 
 function decideFollowUpStrategy({
@@ -457,100 +493,238 @@ function decideFollowUpStrategy({
   minRequiredQuestions,
   minRequiredDays
 }) {
-  // If we already reached max follow-ups on this day, transition
   if (consecutiveFollowUps >= maxFollowUps) {
     return false;
   }
-
-  // If we still need to cover more curriculum days to meet the minimum 4 days constraint,
-  // and we haven't covered 4 days yet, favor day transitions
-  if (coveredDaysCount < minRequiredDays && totalQuestions >= 6 && consecutiveFollowUps >= 1) {
+  if (coveredDaysCount < minRequiredDays && totalQuestions >= 5 && consecutiveFollowUps >= 1) {
     return false;
   }
-
-  // If candidate gave a good response with interesting technical claims, probe deeper with follow-up
-  if (turnEval && turnEval.technicalScore >= 60 && consecutiveFollowUps < 2) {
+  if (turnEval && turnEval.technicalScore >= 45 && consecutiveFollowUps < 1) {
     return true;
   }
-
-  // If candidate struggled or gave a brief answer, give 1 follow-up probe to elaborate
   if (consecutiveFollowUps === 0) {
     return true;
   }
-
   return false;
 }
 
-async function evaluateSingleTurn({ question, answer, code, dayNumber, candidate }) {
+/**
+ * Deep multi-dimensional evaluation of a candidate turn
+ */
+async function evaluateSingleTurn({ question, answer, code, dayNumber, candidate, session }) {
   const curriculumDay = CURRICULUM_DAYS.find((d) => d.day === dayNumber) || CURRICULUM_DAYS[0];
 
-  // Try calling configured external LLM provider if available
+  // 1. Try Gemini Provider
   if (aiConfig.activeProvider === "gemini" && aiConfig.geminiApiKey) {
     try {
       return await evaluateWithGemini({ question, answer, code, curriculumDay, candidate });
     } catch (err) {
-      console.warn("Gemini evaluation fallback to built-in engine:", err.message);
+      console.warn("Gemini evaluation fallback:", err.message);
     }
-  } else if (aiConfig.activeProvider === "openai" && aiConfig.openaiApiKey) {
+  }
+
+  // 2. Try Groq Provider (Ultra-fast Llama 3.3 70B)
+  if (aiConfig.activeProvider === "groq" && aiConfig.groqApiKey) {
+    try {
+      return await evaluateWithGroq({ question, answer, code, curriculumDay, candidate });
+    } catch (err) {
+      console.warn("Groq evaluation fallback:", err.message);
+    }
+  }
+
+  // 3. Try OpenAI Provider
+  if (aiConfig.activeProvider === "openai" && aiConfig.openaiApiKey) {
     try {
       return await evaluateWithOpenAI({ question, answer, code, curriculumDay, candidate });
     } catch (err) {
-      console.warn("OpenAI evaluation fallback to built-in engine:", err.message);
+      console.warn("OpenAI evaluation fallback:", err.message);
     }
   }
 
-  // Built-in High-Quality Intelligent Enterprise Evaluation Engine
+  // 4. Try Ollama Local Provider
+  if (aiConfig.activeProvider === "ollama" && aiConfig.ollamaBaseUrl) {
+    try {
+      return await evaluateWithOllama({ question, answer, code, curriculumDay, candidate });
+    } catch (err) {
+      console.warn("Ollama evaluation fallback:", err.message);
+    }
+  }
+
+  // 5. State-of-the-art Built-in Semantic AI Evaluation Engine (Strict Relevance & Scoring)
   return evaluateWithBuiltinEngine({ question, answer, code, curriculumDay, candidate });
 }
 
+/**
+ * Enhanced Built-in Semantic & Natural Language Evaluation Engine
+ * Strictly verifies relevance, accuracy, depth, edge cases, and failure recovery.
+ */
 function evaluateWithBuiltinEngine({ question, answer, code, curriculumDay, candidate }) {
-  const text = (answer || "").toLowerCase();
-  const codeText = (code || "").toLowerCase();
-  const allContent = text + " " + codeText;
+  const text = (answer || "").trim().toLowerCase();
+  const codeText = (code || "").trim().toLowerCase();
+  const fullContent = text + " " + codeText;
+  const words = fullContent.split(/\s+/).filter((w) => w.length > 0);
 
-  let technicalScore = 75;
-  let architectureScore = 75;
-  let edgeCaseScore = 70;
-  let communicationScore = 80;
+  // -------------------------------------------------------------
+  // 1. EVASION & JUNK / GIBBERISH / OFF-TOPIC DETECTION
+  // -------------------------------------------------------------
+  const evasionPhrases = [
+    "dont know", "don't know", "no idea", "hello", "hi", "test", "testing",
+    "kuch bhi", "nahi pata", "mujhe nahi", "asdf", "qwerty", "random", "xyz",
+    "nothing", "skip", "idk", "blah", "hahaha", "pass", "ok", "okay", "yes", "no", "na", "none"
+  ];
 
-  // Check key concepts matching
-  let matchedConcepts = 0;
-  curriculumDay.keyConcepts.forEach((concept) => {
-    if (allContent.includes(concept.toLowerCase().replace(/[^a-z0-9]/g, " "))) {
-      matchedConcepts += 1;
+  const isExactEvasion = words.length <= 8 && evasionPhrases.some((p) => text.includes(p));
+  const hasRepeatingChars = /(.)\1{4,}/.test(text); // e.g. "aaaaa", "zzzzzz"
+  const isTooShortToAnswer = words.length < 4 && (!code || code.trim().length < 15);
+
+  // -------------------------------------------------------------
+  // 2. CONCEPT & TOPIC RELEVANCE EXTRACTION
+  // -------------------------------------------------------------
+  const matchedConcepts = [];
+  const targetConcepts = [
+    ...(curriculumDay.keyConcepts || []),
+    ...(curriculumDay.toolsUsed || []),
+    curriculumDay.topic
+  ];
+
+  targetConcepts.forEach((concept) => {
+    if (!concept) return;
+    const cleanConcept = concept.toLowerCase().replace(/[^a-z0-9]/g, " ").trim();
+    const subParts = cleanConcept.split(/\s+/).filter((p) => p.length > 3);
+    
+    if (fullContent.includes(cleanConcept)) {
+      matchedConcepts.push(concept);
+    } else if (subParts.length > 0 && subParts.some((p) => fullContent.includes(p))) {
+      matchedConcepts.push(concept);
     }
   });
 
-  if (matchedConcepts >= 3) {
-    technicalScore += 15;
-    architectureScore += 12;
-  } else if (matchedConcepts >= 1) {
-    technicalScore += 8;
-  } else if (allContent.length < 50) {
-    technicalScore = Math.max(30, technicalScore - 35);
-    communicationScore = Math.max(40, communicationScore - 30);
+  // General AI Engineering Vocab for relevance
+  const generalEngineeringTerms = [
+    "database", "index", "vector", "pipeline", "model", "latency", "memory", "cache", "async",
+    "schema", "api", "query", "embedding", "chunk", "server", "docker", "python", "fastapi",
+    "rag", "mcp", "vllm", "token", "gpu", "retry", "fallback", "error", "client", "agent",
+    "prompt", "function", "class", "def", "import", "return", "const", "interface", "hnsw",
+    "bm25", "quantiz", "sla", "p99", "p50", "pydantic", "langgraph", "ollama", "chroma", "pinecone"
+  ];
+
+  const generalMatches = generalEngineeringTerms.filter((term) => fullContent.includes(term));
+  const uniqueMatched = Array.from(new Set(matchedConcepts));
+
+  // -------------------------------------------------------------
+  // 3. ZERO / NEAR-ZERO SCORING FOR IRRELEVANT / JUNK ANSWERS
+  // -------------------------------------------------------------
+  if (isExactEvasion || hasRepeatingChars || (uniqueMatched.length === 0 && generalMatches.length === 0) || isTooShortToAnswer) {
+    const technicalScore = isTooShortToAnswer ? 5 : Math.floor(Math.random() * 6) + 5; // 5-10%
+    const architectureScore = Math.floor(Math.random() * 5) + 5; // 5-9%
+    const edgeCaseScore = 0;
+    const communicationScore = words.length < 5 ? 10 : 20;
+
+    return {
+      technicalScore,
+      architectureScore,
+      edgeCaseScore,
+      communicationScore,
+      feedback: `The submitted response is irrelevant, evasive, or lacks technical substance for Day ${curriculumDay.day} (${curriculumDay.topic}). Enterprise technical rounds require concrete architectural implementations, trade-offs, and failure recovery mechanisms.`,
+      strengthsIdentified: [],
+      gapsIdentified: [
+        `Failed to answer the question regarding ${curriculumDay.topic}`,
+        "Zero relevant engineering concepts or trade-offs provided"
+      ],
+      matchedConcepts: [],
+      idealEngineeringAnswer: `### Staff-Level Architecture for Day ${curriculumDay.day} (${curriculumDay.topic})
+1. **System Architecture**: Use ${(curriculumDay.toolsUsed || ["Standard Tooling"]).join(", ")} configured for high throughput and sub-50ms P99 latency.
+2. **Failure Modes**: Handle edge cases with exponential backoff retries, circuit breakers, and schema validation.
+3. **Observability**: Instrument OpenTelemetry spans to trace token attribution and latency per request.`
+    };
   }
 
-  // Check code presence
+  // -------------------------------------------------------------
+  // 4. REALISTIC GRADED SCORING FOR TECHNICAL ANSWERS
+  // -------------------------------------------------------------
+  let technicalScore = 40;
+  let architectureScore = 35;
+  let edgeCaseScore = 20;
+  let communicationScore = 45;
+
+  const strengthsIdentified = [];
+  const gapsIdentified = [];
+
+  // Concept coverage bonus
+  if (uniqueMatched.length >= 2) {
+    technicalScore += 30;
+    architectureScore += 26;
+    strengthsIdentified.push(`Demonstrated solid grasp of core Day ${curriculumDay.day} concepts (${uniqueMatched.slice(0, 3).join(", ")}).`);
+  } else if (uniqueMatched.length >= 1) {
+    technicalScore += 22;
+    architectureScore += 18;
+    strengthsIdentified.push(`Referenced relevant curriculum tools/concepts (${uniqueMatched.slice(0, 2).join(", ")}).`);
+  } else if (generalMatches.length >= 2) {
+    technicalScore += 12;
+    architectureScore += 10;
+    gapsIdentified.push(`Used generic engineering terms without focusing on specific Day ${curriculumDay.day} tooling (${(curriculumDay.toolsUsed || []).slice(0, 2).join(", ")}).`);
+  }
+
+  // Quantitative & SLA signals
+  const quantitativeSignals = ["p99", "p50", "p95", "latency", "sla", "throughput", "qps", "ms", "millisecond", "memory", "ram", "gpu", "token", "chunk size", "overlap", "top_k", "dimension", "quantiz"];
+  const hasQuantitative = quantitativeSignals.filter((sig) => fullContent.includes(sig));
+  if (hasQuantitative.length >= 2) {
+    technicalScore += 14;
+    architectureScore += 15;
+    strengthsIdentified.push(`Effectively quantified system metrics & latency SLAs (${hasQuantitative.slice(0, 3).join(", ")}).`);
+  } else {
+    gapsIdentified.push("Needs to explicitly quantify latency SLAs (P99), memory overhead, and throughput trade-offs.");
+  }
+
+  // Edge-Case & Failure Mode Analysis
+  const edgeCaseSignals = ["fallback", "retry", "circuit breaker", "timeout", "error", "exception", "validation", "failover", "backoff", "rate limit", "dead letter", "out of memory", "oom"];
+  const hasEdgeCases = edgeCaseSignals.filter((sig) => fullContent.includes(sig));
+  if (hasEdgeCases.length >= 1) {
+    edgeCaseScore += 50;
+    architectureScore += 10;
+    strengthsIdentified.push(`Addressed failure recovery mechanisms (${hasEdgeCases.slice(0, 2).join(", ")}).`);
+  } else {
+    gapsIdentified.push("Did not outline concrete failure recovery, backoff retries, or circuit-breaking fallbacks.");
+  }
+
+  // Code Implementation Quality
   if (code && code.trim().length > 30) {
-    technicalScore = Math.min(98, technicalScore + 8);
-    architectureScore = Math.min(95, architectureScore + 6);
+    technicalScore += 10;
+    if (code.includes("try") || code.includes("except") || code.includes("catch") || code.includes("if") || code.includes("async")) {
+      edgeCaseScore += 15;
+      architectureScore += 6;
+      strengthsIdentified.push("Provided structured implementation code with defensive control flow.");
+    }
   }
 
-  // Bound scores between 10 and 99
-  technicalScore = Math.min(98, Math.max(20, technicalScore));
-  architectureScore = Math.min(96, Math.max(25, architectureScore));
-  edgeCaseScore = Math.min(94, Math.max(20, edgeCaseScore));
-  communicationScore = Math.min(99, Math.max(30, communicationScore));
+  // Answer Length & Communication Density
+  if (words.length > 40) {
+    communicationScore += 40;
+  } else if (words.length > 20) {
+    communicationScore += 25;
+  } else {
+    gapsIdentified.push("Response was brief; expand on architectural design decisions and reasoning.");
+  }
 
-  const feedback = `Good discussion of ${curriculumDay.topic}. You accurately addressed ${
-    matchedConcepts > 0 ? "key curriculum concepts including " + curriculumDay.keyConcepts.slice(0, 2).join(", ") : "the high-level mechanics"
-  }. To elevate this to staff-level engineering, explicitly quantify latency SLAs (P99), memory footprints, and fallback strategies.`;
+  // Bound scores between 10 and 98
+  technicalScore = Math.min(98, Math.max(10, technicalScore));
+  architectureScore = Math.min(96, Math.max(10, architectureScore));
+  edgeCaseScore = Math.min(95, Math.max(5, edgeCaseScore));
+  communicationScore = Math.min(99, Math.max(20, communicationScore));
 
-  const idealEngineeringAnswer = `For ${curriculumDay.topic} (Day ${curriculumDay.day}), an optimal enterprise architecture balances recall precision with latency SLAs. In production:
-1. Architectural Design: Decouple compute-heavy operations using specialized primitives (${curriculumDay.toolsUsed.join(", ")}).
-2. Failure Modes: Handle edge cases through circuit breakers, backoff retries, and strict schema validation.
-3. Observability: Instrument OpenTelemetry spans to track P99 latency and token attribution per request.`;
+  const feedback = `${
+    strengthsIdentified.length > 0 ? strengthsIdentified[0] : `Addressed fundamentals of Day ${curriculumDay.day} (${curriculumDay.topic}).`
+  } ${gapsIdentified.length > 0 ? gapsIdentified[0] : "To reach Staff level, document continuous benchmarking and decoupled asynchronous architectures."}`;
+
+  const idealEngineeringAnswer = `### Staff-Level Architecture for Day ${curriculumDay.day} (${curriculumDay.topic})
+1. **Core System Architecture**:
+   - Utilize specialized primitives (${(curriculumDay.toolsUsed || ["Standard Tooling"]).join(", ")}) configured for high throughput and sub-50ms P99 latency.
+   - Decouple compute from state management using asynchronous event queues.
+2. **Failure Modes & Edge Cases**:
+   - Wrap remote inference and database queries in circuit breakers with exponential backoff and jitter.
+   - Enforce strict JSON Schema validation with deterministic fallbacks upon tool parsing errors.
+3. **Observability & SLAs**:
+   - Trace end-to-end spans with OpenTelemetry, attributing token costs and memory allocations per tenant.`;
 
   return {
     technicalScore,
@@ -559,66 +733,145 @@ function evaluateWithBuiltinEngine({ question, answer, code, curriculumDay, cand
     communicationScore,
     feedback,
     idealEngineeringAnswer,
-    matchedConcepts: curriculumDay.keyConcepts.slice(0, Math.max(1, matchedConcepts))
+    strengthsIdentified,
+    gapsIdentified,
+    matchedConcepts: uniqueMatched.slice(0, 4)
   };
 }
 
+/**
+ * Generate intelligent follow-up question dynamically probing candidate's specific answer
+ */
 async function generateIntelligentFollowUp({
   currentQuestion,
   candidateAnswer,
   candidateCode,
   dayNumber,
   candidate,
-  conversationHistory
+  session,
+  turnEval
 }) {
   const curriculumDay = CURRICULUM_DAYS.find((d) => d.day === dayNumber) || CURRICULUM_DAYS[0];
 
-  // Try external LLM if configured
+  // Try LLM Providers
   if (aiConfig.activeProvider === "gemini" && aiConfig.geminiApiKey) {
     try {
-      return await generateGeminiFollowUp({ currentQuestion, candidateAnswer, candidateCode, curriculumDay, candidate });
+      const q = await generateGeminiFollowUp({ currentQuestion, candidateAnswer, candidateCode, curriculumDay, candidate });
+      if (q && isQuestionFresh(q, session)) return q;
     } catch (err) {
-      console.warn("Gemini follow-up generation fallback:", err.message);
+      console.warn("Gemini follow-up fallback:", err.message);
     }
   }
 
-  // Built-in intelligent follow-up selector with contextual probing
-  if (curriculumDay.followUpProbes && curriculumDay.followUpProbes.length > 0) {
-    const probeIndex = Math.floor(Math.random() * curriculumDay.followUpProbes.length);
-    return `[Follow-Up on Day ${dayNumber} - ${curriculumDay.topic}]: Based on your response, let's probe deeper into the trade-offs:\n\n${curriculumDay.followUpProbes[probeIndex]}`;
+  if (aiConfig.activeProvider === "groq" && aiConfig.groqApiKey) {
+    try {
+      const q = await generateGroqFollowUp({ currentQuestion, candidateAnswer, candidateCode, curriculumDay, candidate });
+      if (q && isQuestionFresh(q, session)) return q;
+    } catch (err) {
+      console.warn("Groq follow-up fallback:", err.message);
+    }
   }
 
-  return `[Follow-Up on Day ${dayNumber}]: You mentioned key architectural choices in your response. How do you quantify the latency and cost trade-offs of this approach when scaling to 10 million daily active requests?`;
+  if (aiConfig.activeProvider === "openai" && aiConfig.openaiApiKey) {
+    try {
+      const q = await generateOpenAIFollowUp({ currentQuestion, candidateAnswer, candidateCode, curriculumDay, candidate });
+      if (q && isQuestionFresh(q, session)) return q;
+    } catch (err) {
+      console.warn("OpenAI follow-up fallback:", err.message);
+    }
+  }
+
+  // Built-in intelligent probe synthesizer
+  const answerLower = (candidateAnswer || "").toLowerCase();
+  
+  // If the answer was junk or low scoring, probe them to give real technical substance
+  if (turnEval && turnEval.technicalScore < 30) {
+    return `[Adaptive Follow-Up on Day ${dayNumber} - ${curriculumDay.topic}]: Let's be specific. Can you explain the exact technical tools (${(curriculumDay.toolsUsed || []).slice(0, 3).join(", ")}) you configured on this day and the primary challenge you solved?`;
+  }
+
+  // Pick an unasked follow-up probe from curriculum
+  if (curriculumDay.followUpProbes && curriculumDay.followUpProbes.length > 0) {
+    for (const probe of curriculumDay.followUpProbes) {
+      const formatted = `[Adaptive Follow-Up on Day ${dayNumber} - ${curriculumDay.topic}]: Based on your response, let's probe deeper into production trade-offs:\n\n${probe}`;
+      if (isQuestionFresh(formatted, session)) {
+        return formatted;
+      }
+    }
+  }
+
+  // Synthesize dynamic contextual probe
+  if (turnEval && turnEval.gapsIdentified && turnEval.gapsIdentified.length > 0) {
+    const gap = turnEval.gapsIdentified[0];
+    const probe = `[Adaptive Follow-Up on Day ${dayNumber}]: You described your high-level approach, but ${gap.toLowerCase().replace(/^[a-z]/, (c) => c.toLowerCase())} How would you architect this to guarantee 99.9% availability and prevent cascading failures?`;
+    if (isQuestionFresh(probe, session)) return probe;
+  }
+
+  if (answerLower.includes("cache") || answerLower.includes("index") || answerLower.includes("rag")) {
+    return `[Adaptive Follow-Up on Day ${dayNumber} - ${curriculumDay.topic}]: In your architecture, how do you handle cache invalidation and vector index staleness during continuous real-time document updates?`;
+  }
+
+  return `[Adaptive Follow-Up on Day ${dayNumber} - ${curriculumDay.topic}]: What are the primary latency bottlenecks (P99 SLA) and memory overheads when scaling this solution to 10 million daily active requests?`;
 }
 
-async function generateNextDayQuestion({ curriculumDay, candidate, previousAnswers }) {
-  if (curriculumDay.sampleQuestions && curriculumDay.sampleQuestions.length > 0) {
-    const qIndex = (previousAnswers.length) % curriculumDay.sampleQuestions.length;
-    return `Moving forward to Day ${curriculumDay.day} (${curriculumDay.moduleTitle} - ${curriculumDay.topic}):\n\n${curriculumDay.sampleQuestions[qIndex]}`;
+/**
+ * Generate challenging milestone question when transitioning to next curriculum day
+ */
+async function generateNextDayQuestion({ curriculumDay, candidate, session }) {
+  if (aiConfig.activeProvider === "gemini" && aiConfig.geminiApiKey) {
+    try {
+      const q = await generateGeminiDayQuestion({ curriculumDay, candidate });
+      if (q && isQuestionFresh(q, session)) return q;
+    } catch (err) {
+      console.warn("Gemini day question fallback:", err.message);
+    }
   }
-  return `Let's discuss Day ${curriculumDay.day} (${curriculumDay.topic}). Walk me through how you implemented this in your cohort project and the critical design decisions you made.`;
+
+  if (aiConfig.activeProvider === "groq" && aiConfig.groqApiKey) {
+    try {
+      const q = await generateGroqDayQuestion({ curriculumDay, candidate });
+      if (q && isQuestionFresh(q, session)) return q;
+    } catch (err) {
+      console.warn("Groq day question fallback:", err.message);
+    }
+  }
+
+  if (curriculumDay.sampleQuestions && curriculumDay.sampleQuestions.length > 0) {
+    for (const sq of curriculumDay.sampleQuestions) {
+      const formatted = `Moving forward to Day ${curriculumDay.day} (${curriculumDay.moduleTitle} - ${curriculumDay.topic}):\n\n${sq}`;
+      if (isQuestionFresh(formatted, session)) {
+        return formatted;
+      }
+    }
+  }
+
+  return `Moving forward to Day ${curriculumDay.day} (${curriculumDay.moduleTitle} - ${curriculumDay.topic}):\n\nWalk me through your architectural implementation for ${curriculumDay.topic} using ${(curriculumDay.toolsUsed || []).slice(0, 3).join(", ")}, and how you handled the most critical production failure modes.`;
+}
+
+function isQuestionFresh(questionText, session) {
+  if (!session || !session.askedQuestions) return true;
+  const normalized = normalizeQuestionText(questionText);
+  return !session.askedQuestions.has(normalized);
 }
 
 function generateStudyPlan(candidate, overallScore, radarData) {
   const plan = [];
-
-  // Identify lowest scoring module
   const sortedModules = [...radarData].sort((a, b) => a.score - b.score);
-  const weakestModule = sortedModules[0] || { moduleName: "AI Deployment", moduleId: 6 };
+  const weakestModule = sortedModules[0] || { moduleName: "Evaluation & Deployment", moduleId: 7 };
+  const secondWeakest = sortedModules[1] || { moduleName: "Agentic AI & MCP", moduleId: 6 };
 
   plan.push({
     week: "Week 1: Foundations & Weak Point Hardening",
     focus: weakestModule.moduleName,
     actionItems: [
-      `Review cohort missions for Module ${weakestModule.moduleId}.`,
-      "Build a standalone benchmarking sandbox to measure latency and memory trade-offs.",
-      "Implement comprehensive unit and integration tests."
+      `Review cohort missions for Module ${weakestModule.moduleId} (${weakestModule.moduleName}).`,
+      "Build a standalone benchmarking sandbox to measure latency SLAs and memory trade-offs.",
+      "Implement comprehensive unit tests with deterministic failure recovery."
     ]
   });
 
   plan.push({
     week: "Week 2: Advanced Architectural Patterns",
-    focus: "Multi-Agent & Model Context Protocol (MCP)",
+    focus: secondWeakest.moduleName,
     actionItems: [
       "Implement a custom FastMCP server with stdio and SSE transport support.",
       "Build a cyclic LangGraph state machine with human-in-the-loop validation.",
@@ -628,7 +881,7 @@ function generateStudyPlan(candidate, overallScore, radarData) {
 
   plan.push({
     week: "Week 3: Production Serving & Optimization",
-    focus: "vLLM, Speculative Decoding & Quantization",
+    focus: "vLLM, Continuous Batching & Quantization",
     actionItems: [
       "Deploy vLLM with PagedAttention and continuous batching on multi-GPU setups.",
       "Compare AWQ vs FP8 quantization perplexity on target domain benchmarks.",
@@ -650,24 +903,39 @@ function generateStudyPlan(candidate, overallScore, radarData) {
 }
 
 // -------------------------------------------------------------
-// EXTERNAL LLM PROVIDER ADAPTERS (GEMINI / OPENAI)
+// EXTERNAL LLM PROVIDER IMPLEMENTATIONS (GEMINI, GROQ, OPENAI, OLLAMA)
 // -------------------------------------------------------------
 
 async function evaluateWithGemini({ question, answer, code, curriculumDay, candidate }) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${aiConfig.geminiModel}:generateContent?key=${aiConfig.geminiApiKey}`;
-  const prompt = `You are a strict Enterprise AI Engineering Interviewer evaluating a candidate's technical response for Day ${curriculumDay.day} (${curriculumDay.topic}) of the 31-Day Enterprise AI Cohort.
-Question: ${question}
-Candidate Answer: ${answer || "None"}
-Candidate Code: ${code || "None"}
-Key Concepts: ${curriculumDay.keyConcepts.join(", ")}
+  const modelName = aiConfig.geminiModel || "gemini-1.5-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${aiConfig.geminiApiKey}`;
 
-Respond strictly in JSON:
+  const prompt = `You are a strict, world-class Enterprise AI Engineering Technical Interviewer.
+You are evaluating a candidate's response for Day ${curriculumDay.day} (${curriculumDay.topic}) of the 31-Day Enterprise AI Cohort.
+
+Question Asked: ${question}
+Candidate Answer: ${answer || "(No verbal answer)"}
+Candidate Code: ${code || "(No code submitted)"}
+Expected Key Concepts: ${(curriculumDay.keyConcepts || []).join(", ")}
+Expected Tools: ${(curriculumDay.toolsUsed || []).join(", ")}
+
+CRITICAL EVALUATION & SCORING RULES:
+1. STRICT RELEVANCE: Directly check whether the candidate accurately and directly answered the SPECIFIC question asked.
+2. JUNK / IRRELEVANT / EVASIVE ANSWERS:
+   - If the candidate wrote random characters, gibberish ("asdfgh", "kuch bhi", "hello", "hi"), evasive answers ("I don't know", "skip", "idk"), or off-topic generic text, you MUST ASSIGN SCORES BETWEEN 0 AND 15 for technicalScore, architectureScore, and edgeCaseScore.
+   - Set strengthsIdentified to [] and explicitly state in feedback that the response failed to answer the technical question.
+3. PARTIAL ANSWERS: If they only mentioned high-level buzzwords without architectural depth or trade-offs, score between 30 and 55.
+4. STRONG STAFF-LEVEL ANSWERS: Only award 80-98 if the candidate clearly explains implementation mechanisms, quantitative metrics (latency SLAs, P99, memory footprint), and failure recovery (circuit breakers, retry backoff, schema validation).
+
+Respond strictly in JSON format with keys:
 {
   "technicalScore": <number 0-100>,
   "architectureScore": <number 0-100>,
   "edgeCaseScore": <number 0-100>,
   "communicationScore": <number 0-100>,
-  "feedback": "<concise actionable critique>",
+  "feedback": "<concise strict feedback highlighting why this score was given>",
+  "strengthsIdentified": ["<specific point 1>"],
+  "gapsIdentified": ["<specific missing point 1>"],
   "idealEngineeringAnswer": "<clean markdown of the staff-level answer>"
 }`;
 
@@ -676,12 +944,12 @@ Respond strictly in JSON:
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { responseMimeType: "application/json", temperature: 0.2 }
+      generationConfig: { responseMimeType: "application/json", temperature: 0.1 }
     })
   });
 
   if (!response.ok) {
-    throw new Error(`Gemini API returned ${response.status}`);
+    throw new Error(`Gemini API returned status ${response.status}`);
   }
 
   const data = await response.json();
@@ -690,14 +958,15 @@ Respond strictly in JSON:
 }
 
 async function generateGeminiFollowUp({ currentQuestion, candidateAnswer, candidateCode, curriculumDay, candidate }) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${aiConfig.geminiModel}:generateContent?key=${aiConfig.geminiApiKey}`;
-  const prompt = `You are an elite Enterprise AI Engineering Technical Interviewer.
-The candidate is answering a question on Day ${curriculumDay.day} (${curriculumDay.topic}).
+  const modelName = aiConfig.geminiModel || "gemini-1.5-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${aiConfig.geminiApiKey}`;
+
+  const prompt = `You are an elite Enterprise AI Technical Interviewer conducting an interview on Day ${curriculumDay.day} (${curriculumDay.topic}).
 Question: ${currentQuestion}
 Candidate Response: ${candidateAnswer}
 Candidate Code: ${candidateCode || "None"}
 
-Generate exactly ONE probing, realistic follow-up question that challenges their architectural trade-offs, edge cases, latency SLAs, or failure modes based on what they just said. Do not include introductory conversational fluff.`;
+Generate exactly ONE sharp, challenging follow-up question that probes their architectural trade-offs, edge cases, latency SLAs, or failure modes based on what they just said. Do not include conversational greetings. Return plain text only.`;
 
   const response = await fetch(url, {
     method: "POST",
@@ -708,18 +977,136 @@ Generate exactly ONE probing, realistic follow-up question that challenges their
     })
   });
 
-  if (!response.ok) {
-    throw new Error(`Gemini API error ${response.status}`);
-  }
-
+  if (!response.ok) throw new Error(`Gemini API error ${response.status}`);
   const data = await response.json();
-  const questionText = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
-  return `[Intelligent Follow-Up - Day ${curriculumDay.day}]: ${questionText}`;
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+  return `[Adaptive Follow-Up - Day ${curriculumDay.day}]: ${text}`;
+}
+
+async function generateGeminiDayQuestion({ curriculumDay, candidate }) {
+  const modelName = aiConfig.geminiModel || "gemini-1.5-flash";
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${aiConfig.geminiApiKey}`;
+
+  const prompt = `You are an elite Enterprise AI Interviewer. The interview is advancing to Day ${curriculumDay.day} (${curriculumDay.moduleTitle} - ${curriculumDay.topic}).
+Tools: ${(curriculumDay.toolsUsed || []).join(", ")}
+Objectives: ${(curriculumDay.objectives || []).join("; ")}
+
+Generate ONE realistic, milestone interview question asking the candidate how they implemented this module and made critical architectural trade-offs. Return plain question text only.`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.3 }
+    })
+  });
+
+  if (!response.ok) throw new Error(`Gemini API error ${response.status}`);
+  const data = await response.json();
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || "";
+  return `Moving forward to Day ${curriculumDay.day} (${curriculumDay.moduleTitle} - ${curriculumDay.topic}):\n\n${text}`;
+}
+
+async function evaluateWithGroq({ question, answer, code, curriculumDay, candidate }) {
+  const url = "https://api.groq.com/openai/v1/chat/completions";
+  const prompt = `You are a strict Enterprise AI Interviewer evaluating a response for Day ${curriculumDay.day} (${curriculumDay.topic}).
+Question: ${question}
+Answer: ${answer}
+Code: ${code}
+Key Concepts: ${(curriculumDay.keyConcepts || []).join(", ")}
+
+STRICT RULES:
+- If the answer is irrelevant, gibberish ("hello", "asdf", "kuch bhi"), evasive ("I don't know"), or completely off-topic, ASSIGN 0-15 scores for technicalScore, architectureScore, edgeCaseScore.
+- Only award 80+ for rigorous architectural trade-offs, quantitative latency SLAs, and concrete failure handling.
+
+Respond strictly in JSON with keys: technicalScore (0-100), architectureScore (0-100), edgeCaseScore (0-100), communicationScore (0-100), feedback (string), strengthsIdentified (array), gapsIdentified (array), idealEngineeringAnswer (markdown string).`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${aiConfig.groqApiKey}`
+    },
+    body: JSON.stringify({
+      model: aiConfig.groqModel || "llama-3.3-70b-versatile",
+      messages: [
+        { role: "system", content: "You are a senior enterprise AI interviewer. Output JSON only." },
+        { role: "user", content: prompt }
+      ],
+      response_format: { type: "json_object" }
+    })
+  });
+
+  if (!response.ok) throw new Error(`Groq API returned ${response.status}`);
+  const data = await response.json();
+  return JSON.parse(data.choices[0].message.content);
+}
+
+async function generateGroqFollowUp({ currentQuestion, candidateAnswer, candidateCode, curriculumDay, candidate }) {
+  const url = "https://api.groq.com/openai/v1/chat/completions";
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${aiConfig.groqApiKey}`
+    },
+    body: JSON.stringify({
+      model: aiConfig.groqModel || "llama-3.3-70b-versatile",
+      messages: [
+        {
+          role: "system",
+          content: `You are an elite Enterprise AI Interviewer for Day ${curriculumDay.day} (${curriculumDay.topic}). Generate exactly ONE probing follow-up question challenging latency SLAs, edge cases, or failure modes based on candidate's answer. No conversational fluff.`
+        },
+        { role: "user", content: `Question: ${currentQuestion}\nAnswer: ${candidateAnswer}\nCode: ${candidateCode}` }
+      ]
+    })
+  });
+
+  if (!response.ok) throw new Error(`Groq API returned ${response.status}`);
+  const data = await response.json();
+  const text = data.choices[0].message.content.trim();
+  return `[Adaptive Follow-Up - Day ${curriculumDay.day}]: ${text}`;
+}
+
+async function generateGroqDayQuestion({ curriculumDay, candidate }) {
+  const url = "https://api.groq.com/openai/v1/chat/completions";
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${aiConfig.groqApiKey}`
+    },
+    body: JSON.stringify({
+      model: aiConfig.groqModel || "llama-3.3-70b-versatile",
+      messages: [
+        {
+          role: "system",
+          content: `You are an enterprise AI interviewer. Generate ONE milestone technical question for Day ${curriculumDay.day} (${curriculumDay.topic}) with tools: ${(curriculumDay.toolsUsed || []).join(", ")}. Return only question text.`
+        },
+        { role: "user", content: "Generate question." }
+      ]
+    })
+  });
+
+  if (!response.ok) throw new Error(`Groq API returned ${response.status}`);
+  const data = await response.json();
+  const text = data.choices[0].message.content.trim();
+  return `Moving forward to Day ${curriculumDay.day} (${curriculumDay.moduleTitle} - ${curriculumDay.topic}):\n\n${text}`;
 }
 
 async function evaluateWithOpenAI({ question, answer, code, curriculumDay, candidate }) {
   const url = "https://api.openai.com/v1/chat/completions";
-  const prompt = `Evaluate this response for Day ${curriculumDay.day} (${curriculumDay.topic}). Return JSON with technicalScore, architectureScore, edgeCaseScore, communicationScore, feedback, idealEngineeringAnswer.`;
+  const prompt = `Evaluate candidate response for Day ${curriculumDay.day} (${curriculumDay.topic}).
+Question: ${question}
+Answer: ${answer}
+Code: ${code}
+
+STRICT RULES:
+- If irrelevant, gibberish ("hello", "asdf", "kuch bhi"), or evasive ("I don't know"), score 0-15.
+- Only award 80+ for deep architectural trade-offs, quantitative latency SLAs, and failure handling.
+
+Return JSON with technicalScore, architectureScore, edgeCaseScore, communicationScore, feedback, strengthsIdentified, gapsIdentified, idealEngineeringAnswer.`;
 
   const response = await fetch(url, {
     method: "POST",
@@ -728,19 +1115,67 @@ async function evaluateWithOpenAI({ question, answer, code, curriculumDay, candi
       Authorization: `Bearer ${aiConfig.openaiApiKey}`
     },
     body: JSON.stringify({
-      model: aiConfig.openaiModel,
+      model: aiConfig.openaiModel || "gpt-4o-mini",
       messages: [
         { role: "system", content: "You are an enterprise AI interviewer. Return valid JSON only." },
-        { role: "user", content: `Question: ${question}\nAnswer: ${answer}\nCode: ${code}\n${prompt}` }
+        { role: "user", content: prompt }
       ],
       response_format: { type: "json_object" }
     })
   });
 
-  if (!response.ok) {
-    throw new Error(`OpenAI API returned ${response.status}`);
-  }
-
+  if (!response.ok) throw new Error(`OpenAI API returned ${response.status}`);
   const data = await response.json();
   return JSON.parse(data.choices[0].message.content);
+}
+
+async function generateOpenAIFollowUp({ currentQuestion, candidateAnswer, candidateCode, curriculumDay, candidate }) {
+  const url = "https://api.openai.com/v1/chat/completions";
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${aiConfig.openaiApiKey}`
+    },
+    body: JSON.stringify({
+      model: aiConfig.openaiModel || "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `You are an elite Enterprise AI Interviewer. Generate ONE sharp follow-up question for Day ${curriculumDay.day} based on the candidate's answer.`
+        },
+        { role: "user", content: `Question: ${currentQuestion}\nAnswer: ${candidateAnswer}` }
+      ]
+    })
+  });
+
+  if (!response.ok) throw new Error(`OpenAI API returned ${response.status}`);
+  const data = await response.json();
+  return `[Adaptive Follow-Up - Day ${curriculumDay.day}]: ${data.choices[0].message.content.trim()}`;
+}
+
+async function evaluateWithOllama({ question, answer, code, curriculumDay, candidate }) {
+  const url = `${aiConfig.ollamaBaseUrl}/api/generate`;
+  const prompt = `You are an Enterprise AI Interviewer evaluating Day ${curriculumDay.day} (${curriculumDay.topic}).
+Question: ${question}
+Answer: ${answer}
+Code: ${code}
+
+If irrelevant or gibberish, score 0-15.
+Output JSON with keys technicalScore (number), architectureScore (number), edgeCaseScore (number), communicationScore (number), feedback (string), idealEngineeringAnswer (string).`;
+
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      model: aiConfig.ollamaModel || "mistral",
+      prompt,
+      stream: false,
+      format: "json"
+    })
+  });
+
+  if (!response.ok) throw new Error(`Ollama returned ${response.status}`);
+  const data = await response.json();
+  return JSON.parse(data.response);
 }
