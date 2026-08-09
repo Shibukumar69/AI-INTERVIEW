@@ -13,13 +13,10 @@ import {
   MicOff,
   Sparkles,
   Layers,
-  ChevronRight,
-  ArrowRight,
   RefreshCw,
   Award,
   Zap,
   HelpCircle,
-  FileText,
   CheckCircle2,
   AlertTriangle,
   Volume2,
@@ -28,11 +25,11 @@ import {
   Check,
   BookOpen,
   Info,
-  Terminal,
   ShieldCheck
 } from "lucide-react";
 import axios from "axios";
 import { getApiUrl } from "../config/api";
+import { useTheme } from "../context/ThemeContext";
 
 const SUPPORTED_LANGUAGES = [
   { label: "Python", value: "python" },
@@ -69,6 +66,7 @@ const extractQuestionDetails = (rawText) => {
 const InterviewRunner = () => {
   const { sessionId } = useParams();
   const navigate = useNavigate();
+  const { isDark } = useTheme();
 
   // Find candidate matched by session or default
   const getInitialCandidate = () => {
@@ -150,7 +148,6 @@ const InterviewRunner = () => {
 
           if (res.data.conversationHistory && res.data.conversationHistory.length > 0) {
             setConversation(res.data.conversationHistory);
-            // Get latest interviewer question
             const lastInterviewerMsg = [...res.data.conversationHistory].reverse().find((m) => m.role === "interviewer");
             if (lastInterviewerMsg) {
               const details = extractQuestionDetails(lastInterviewerMsg.text);
@@ -162,7 +159,6 @@ const InterviewRunner = () => {
           }
         }
       } catch (e) {
-        // Running seamlessly in offline/fallback mode with client state
         console.info("Using synchronized client interview session state.");
       } finally {
         if (isMounted) setIsThinking(false);
@@ -205,71 +201,85 @@ const InterviewRunner = () => {
     window.speechSynthesis.speak(utterance);
   };
 
-  // Copy question to clipboard
+  // Copy active question text
   const handleCopyQuestion = () => {
-    if (!activeQuestion) return;
     navigator.clipboard.writeText(activeQuestion);
     setCopiedQuestion(true);
     setTimeout(() => setCopiedQuestion(false), 2000);
   };
 
-  // Handle Response Submission
+  // Submit Candidate Answer Turn
   const handleSubmitAnswer = async () => {
-    if (!answerText.trim() && !codeContent.trim() && !isRecording) return;
+    if (!answerText.trim() && !codeContent.trim()) return;
+    if (isThinking) return;
 
     if (isSpeaking && window.speechSynthesis) {
       window.speechSynthesis.cancel();
       setIsSpeaking(false);
     }
 
-    const currentText = answerText;
-    const currentCode = showCodeEditor ? codeContent : "";
+    const currentAnswer = answerText.trim();
+    const currentCode = codeContent.trim() !== DEFAULT_CODE_TEMPLATES[selectedLanguage]?.trim() ? codeContent : null;
 
-    // Add candidate turn immediately to UI
-    const candidateMsg = {
+    const userMessage = {
       role: "candidate",
-      text: currentText || (currentCode ? "Code implementation submitted in sandbox." : "(Audio voice answer submitted)"),
-      code: currentCode || null,
-      dayNumber: currentDayNumber,
+      text: currentAnswer || "Submitted implementation code for evaluation.",
+      code: currentCode,
       timestamp: new Date()
     };
 
-    setConversation((prev) => [...prev, candidateMsg]);
+    setConversation((prev) => [...prev, userMessage]);
     setAnswerText("");
     setIsThinking(true);
 
     try {
-      const res = await axios.post(getApiUrl("/api/interview/chat"), {
+      const payload = {
         sessionId,
-        userAnswerText: currentText,
-        userCode: currentCode
-      });
+        candidateId: candidate.id,
+        userAnswerText: currentAnswer,
+        userCode: currentCode,
+        currentDayNumber,
+        turnCount
+      };
+
+      const res = await axios.post(getApiUrl("/api/interview/chat"), payload);
 
       if (res.data) {
-        setTurnCount(res.data.turnCount);
-        setIsFollowUp(res.data.isFollowUp);
-        setCurrentDayNumber(res.data.currentDayNumber);
-        setModuleTitle(res.data.moduleTitle);
-        setTopic(res.data.topic);
-        setCoveredDays(res.data.coveredDays);
+        const nextQCount = res.data.turnCount || turnCount + 1;
+        const nextDay = res.data.currentDayNumber || currentDayNumber;
+        const isNextFollowUp = !!res.data.isFollowUp;
 
-        const newQText = res.data.questionText;
-        const details = extractQuestionDetails(newQText);
+        setTurnCount(nextQCount);
+        setCurrentDayNumber(nextDay);
+        setIsFollowUp(isNextFollowUp);
+
+        if (res.data.coveredDays) {
+          setCoveredDays(res.data.coveredDays);
+        } else if (!coveredDays.includes(nextDay)) {
+          setCoveredDays((prev) => [...prev, nextDay]);
+        }
+
+        const nextCurriculumDay = CURRICULUM_DAYS.find((d) => d.day === nextDay) || CURRICULUM_DAYS[0];
+        setModuleTitle(nextCurriculumDay.moduleTitle);
+        setTopic(nextCurriculumDay.topic);
+
+        const rawNextQuestion = res.data.nextQuestionText || res.data.interviewerText;
+        const details = extractQuestionDetails(rawNextQuestion);
         setActiveQuestion(details.question);
 
-        const aiMsg = {
+        const interviewerMessage = {
           role: "interviewer",
-          text: newQText,
+          text: rawNextQuestion,
           questionText: details.question,
-          dayNumber: res.data.currentDayNumber,
-          isFollowUp: res.data.isFollowUp,
+          dayNumber: nextDay,
+          isFollowUp: isNextFollowUp,
           timestamp: new Date()
         };
 
-        setConversation((prev) => [...prev, aiMsg]);
+        setConversation((prev) => [...prev, interviewerMessage]);
       }
     } catch (e) {
-      // Local client fallback response with adaptive transitions
+      // Fallback Client Simulation Logic
       setTimeout(() => {
         const nextQCount = turnCount + 1;
         setTurnCount(nextQCount);
@@ -281,7 +291,6 @@ const InterviewRunner = () => {
           isNextFollowUp = true;
           setIsFollowUp(true);
         } else {
-          // Cycle through recommended probe days or consecutive curriculum days
           const probeDays = candidate.recommendedProbeDays || [1, 6, 15, 24, 28];
           const currentIndex = probeDays.indexOf(currentDayNumber);
           if (currentIndex !== -1 && currentIndex + 1 < probeDays.length) {
@@ -365,37 +374,37 @@ const InterviewRunner = () => {
       {/* ========================================================================= */}
       {/* PROMINENT ACTIVE QUESTION SPOTLIGHT CARD (HIGH VISIBILITY & CLARITY)       */}
       {/* ========================================================================= */}
-      <div className="relative glass-panel rounded-3xl p-6 sm:p-7 border-2 border-cyan-500/40 shadow-2xl overflow-hidden glow-cyan bg-slate-950/90">
+      <div className="relative glass-panel rounded-3xl p-6 sm:p-7 border-2 border-purple-300 dark:border-cyan-500/40 shadow-ia-card dark:shadow-2xl overflow-hidden glow-purple dark:glow-cyan bg-white/95 dark:bg-slate-950/90 transition-colors duration-300">
         
         {/* Glowing Top Ambient Accent */}
-        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-cyan-400 via-indigo-500 to-purple-500" />
-        <div className="absolute -top-16 -right-16 w-48 h-48 bg-cyan-500/15 rounded-full blur-2xl pointer-events-none" />
+        <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-purple-500 via-indigo-500 to-purple-600 dark:from-cyan-400 dark:via-indigo-500 dark:to-purple-500" />
+        <div className="absolute -top-16 -right-16 w-48 h-48 bg-purple-400/15 dark:bg-cyan-500/15 rounded-full blur-2xl pointer-events-none" />
 
         {/* Card Header with Badges & Action Controls */}
-        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-white/10">
+        <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-[#e5dfeb] dark:border-white/10">
           
           <div className="flex flex-wrap items-center gap-2">
             {/* Question Turn Badge */}
-            <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-cyan-500/20 border border-cyan-400 text-cyan-300 text-xs font-black uppercase font-mono tracking-wider shadow-sm">
-              <HelpCircle className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-purple-100 dark:bg-cyan-500/20 border border-purple-300 dark:border-cyan-400 text-purple-800 dark:text-cyan-300 text-xs font-extrabold uppercase font-mono tracking-wider shadow-sm">
+              <HelpCircle className="w-3.5 h-3.5 text-purple-600 dark:text-cyan-400" />
               <span>Question #{turnCount} of 8+ Required</span>
             </span>
 
             {/* Curriculum Day Pill */}
-            <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-purple-500/20 border border-purple-400 text-purple-200 text-xs font-bold font-mono">
-              <Layers className="w-3.5 h-3.5 text-purple-400" />
+            <span className="inline-flex items-center space-x-1.5 px-3 py-1 rounded-xl bg-purple-50 dark:bg-purple-500/20 border border-purple-200 dark:border-purple-400 text-purple-700 dark:text-purple-200 text-xs font-bold font-mono">
+              <Layers className="w-3.5 h-3.5 text-purple-600 dark:text-purple-400" />
               <span>Day {currentDayNumber}: {activeCurriculumData.topic}</span>
             </span>
 
             {/* Follow-up vs Milestone Tag */}
             {isFollowUp ? (
-              <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-rose-500/20 border border-rose-500/50 text-rose-300 text-[11px] font-black uppercase tracking-wider animate-pulse">
-                <Zap className="w-3.5 h-3.5 text-rose-400" />
+              <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-rose-100 dark:bg-rose-500/20 border border-rose-300 dark:border-rose-500/50 text-rose-700 dark:text-rose-300 text-[11px] font-extrabold uppercase tracking-wider animate-pulse">
+                <Zap className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400" />
                 <span>Adaptive Deep-Dive Probe</span>
               </span>
             ) : (
-              <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-emerald-500/20 border border-emerald-500/50 text-emerald-300 text-[11px] font-bold uppercase tracking-wider">
-                <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 border border-emerald-300 dark:border-emerald-500/50 text-emerald-800 dark:text-emerald-300 text-[11px] font-bold uppercase tracking-wider">
+                <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
                 <span>Cohort Milestone Question</span>
               </span>
             )}
@@ -409,8 +418,8 @@ const InterviewRunner = () => {
               onClick={handleToggleSpeech}
               className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold font-mono transition-all duration-200 ${
                 isSpeaking
-                  ? "bg-cyan-500 text-slate-950 border-cyan-400 shadow-md shadow-cyan-500/30 animate-pulse"
-                  : "bg-slate-900/90 text-cyan-400 border-cyan-500/30 hover:bg-cyan-500/10 hover:text-cyan-300"
+                  ? "bg-purple-600 text-white border-purple-500 shadow-md animate-pulse dark:bg-cyan-500 dark:text-slate-950 dark:border-cyan-400 dark:shadow-cyan-500/30"
+                  : "bg-white dark:bg-slate-900/90 text-purple-700 dark:text-cyan-400 border-[#e5dfeb] dark:border-cyan-500/30 hover:bg-purple-50 dark:hover:bg-cyan-500/10 shadow-sm"
               }`}
               title="Listen to the AI Interviewer speak this question"
             >
@@ -422,10 +431,10 @@ const InterviewRunner = () => {
             <button
               type="button"
               onClick={handleCopyQuestion}
-              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-900/90 text-slate-300 border border-white/10 hover:text-white hover:border-white/30 text-xs font-bold font-mono transition-all"
+              className="flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900/90 text-[#52495d] dark:text-slate-300 border border-[#e5dfeb] dark:border-white/10 hover:text-[#191522] dark:hover:text-white text-xs font-bold font-mono shadow-sm transition-all"
               title="Copy question text to clipboard"
             >
-              {copiedQuestion ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+              {copiedQuestion ? <Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
               <span>{copiedQuestion ? "Copied!" : "Copy"}</span>
             </button>
 
@@ -435,8 +444,8 @@ const InterviewRunner = () => {
               onClick={() => setShowDayObjectives(!showDayObjectives)}
               className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold font-mono transition-all ${
                 showDayObjectives
-                  ? "bg-purple-500/20 text-purple-300 border-purple-500/50"
-                  : "bg-slate-900/90 text-slate-400 border-white/10 hover:text-white"
+                  ? "bg-purple-100 dark:bg-purple-500/20 text-purple-800 dark:text-purple-300 border-purple-300 dark:border-purple-500/50"
+                  : "bg-white dark:bg-slate-900/90 text-[#706879] dark:text-slate-400 border-[#e5dfeb] dark:border-white/10 hover:text-[#191522] dark:hover:text-white shadow-sm"
               }`}
               title="View Day Objectives & Key Tools"
             >
@@ -450,17 +459,17 @@ const InterviewRunner = () => {
         {/* Core Question Text Display (Crisp, High Contrast, Large Font) */}
         <div className="pt-4 space-y-3">
           <div className="flex items-start space-x-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-cyan-500 to-indigo-600 p-0.5 shadow-lg shrink-0 mt-0.5">
-              <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center text-cyan-400">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-br from-purple-600 to-indigo-600 dark:from-cyan-500 dark:to-indigo-600 p-0.5 shadow-md shrink-0 mt-0.5">
+              <div className="w-full h-full bg-white dark:bg-slate-950 rounded-[14px] flex items-center justify-center text-purple-600 dark:text-cyan-400">
                 <Brain className="w-5 h-5" />
               </div>
             </div>
 
             <div className="min-w-0 flex-1">
-              <p className="text-[11px] font-mono font-bold uppercase tracking-wider text-cyan-400 mb-1">
+              <p className="text-[11px] font-mono font-bold uppercase tracking-wider text-purple-700 dark:text-cyan-400 mb-1">
                 Interviewer Technical Prompt:
               </p>
-              <div className="p-4 rounded-2xl bg-slate-900/90 border border-cyan-500/30 text-white font-sans text-sm sm:text-base leading-relaxed tracking-wide shadow-inner">
+              <div className="p-4 rounded-2xl bg-purple-50/70 dark:bg-slate-900/90 border border-purple-200/80 dark:border-cyan-500/30 text-[#191522] dark:text-white font-sans text-sm sm:text-base leading-relaxed tracking-wide shadow-inner">
                 {activeQuestion}
               </div>
             </div>
@@ -468,25 +477,25 @@ const InterviewRunner = () => {
 
           {/* Expandable Day Objectives & Tools Context */}
           {showDayObjectives && (
-            <div className="p-4 rounded-2xl bg-slate-950 border border-purple-500/30 text-xs space-y-2 animate-in fade-in duration-200">
-              <div className="flex items-center space-x-2 text-purple-400 font-bold font-mono uppercase tracking-wider">
+            <div className="p-4 rounded-2xl bg-[#fcfbfd] dark:bg-slate-950 border border-purple-200 dark:border-purple-500/30 text-xs space-y-2 animate-in fade-in duration-200">
+              <div className="flex items-center space-x-2 text-purple-700 dark:text-purple-400 font-bold font-mono uppercase tracking-wider">
                 <Info className="w-4 h-4" />
                 <span>Day {currentDayNumber} Cohort Objectives & Evaluated Concepts:</span>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                 <div>
-                  <p className="text-[11px] text-slate-400 font-bold uppercase">Learning Objectives:</p>
-                  <ul className="list-disc list-inside text-slate-300 space-y-1 mt-1">
+                  <p className="text-[11px] text-[#706879] dark:text-slate-400 font-bold uppercase">Learning Objectives:</p>
+                  <ul className="list-disc list-inside text-[#52495d] dark:text-slate-300 space-y-1 mt-1">
                     {activeCurriculumData.objectives?.slice(0, 3).map((obj, i) => (
                       <li key={i} className="truncate">{obj}</li>
                     ))}
                   </ul>
                 </div>
                 <div>
-                  <p className="text-[11px] text-slate-400 font-bold uppercase">Tools & Tech Evaluated:</p>
+                  <p className="text-[11px] text-[#706879] dark:text-slate-400 font-bold uppercase">Tools & Tech Evaluated:</p>
                   <div className="flex flex-wrap gap-1.5 mt-1">
                     {activeCurriculumData.toolsUsed?.map((tool, i) => (
-                      <span key={i} className="px-2 py-0.5 rounded-md bg-purple-500/10 text-purple-300 border border-purple-500/20 text-[11px] font-mono">
+                      <span key={i} className="px-2 py-0.5 rounded-md bg-purple-100 dark:bg-purple-500/10 text-purple-800 dark:text-purple-300 border border-purple-200 dark:border-purple-500/20 text-[11px] font-mono">
                         {tool}
                       </span>
                     ))}
@@ -497,12 +506,12 @@ const InterviewRunner = () => {
           )}
 
           {/* Answer Guidance Pro-tip */}
-          <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono pt-1">
-            <span className="flex items-center space-x-1 text-slate-400">
-              <Sparkles className="w-3.5 h-3.5 text-cyan-400 inline shrink-0" />
+          <div className="flex items-center justify-between text-[11px] text-[#706879] dark:text-slate-400 font-mono pt-1">
+            <span className="flex items-center space-x-1">
+              <Sparkles className="w-3.5 h-3.5 text-purple-600 dark:text-cyan-400 inline shrink-0" />
               <span>Discuss architectural design, latency budgets (P99), failure modes & edge-case trade-offs.</span>
             </span>
-            <span className="hidden sm:inline text-slate-500">Press Cmd+Enter or Ctrl+Enter to submit</span>
+            <span className="hidden sm:inline text-slate-400 dark:text-slate-500">Press Cmd+Enter or Ctrl+Enter to submit</span>
           </div>
 
         </div>
@@ -516,26 +525,26 @@ const InterviewRunner = () => {
         <div className="lg:col-span-7 space-y-4">
           
           {/* Chat Container */}
-          <div className="glass-panel rounded-3xl p-6 border border-white/10 shadow-2xl flex flex-col h-[560px]">
+          <div className="glass-panel rounded-3xl p-6 border border-[#e5dfeb] dark:border-white/10 shadow-ia-card dark:shadow-2xl flex flex-col h-[560px]">
             
             {/* Chat Header */}
-            <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-4">
+            <div className="flex items-center justify-between border-b border-[#e5dfeb] dark:border-white/10 pb-4 mb-4">
               <div className="flex items-center space-x-3">
-                <div className="w-9 h-9 rounded-xl bg-cyan-500/10 border border-cyan-500/30 flex items-center justify-center text-cyan-400">
+                <div className="w-9 h-9 rounded-xl bg-purple-100 dark:bg-cyan-500/10 border border-purple-200 dark:border-cyan-500/30 flex items-center justify-center text-purple-600 dark:text-cyan-400">
                   <Brain className="w-5 h-5" />
                 </div>
                 <div>
-                  <h3 className="text-sm font-black uppercase text-white font-mono flex items-center space-x-2">
+                  <h3 className="text-sm font-extrabold uppercase text-[#191522] dark:text-white font-heading flex items-center space-x-2">
                     <span>Interview Dialogue Stream</span>
-                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    <span className="w-2 h-2 rounded-full bg-emerald-500 dark:bg-emerald-400 animate-pulse" />
                   </h3>
-                  <p className="text-[11px] text-slate-400">Multi-turn evaluation grounded in 31-day curriculum</p>
+                  <p className="text-[11px] text-[#706879] dark:text-slate-400">Multi-turn evaluation grounded in 31-day curriculum</p>
                 </div>
               </div>
 
               <button
                 onClick={() => setShowDossier(!showDossier)}
-                className="px-3 py-1.5 rounded-xl bg-slate-900 border border-white/10 text-xs text-slate-300 hover:text-cyan-400 hover:border-cyan-500/30 flex items-center space-x-1.5 transition-all"
+                className="px-3 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-[#e5dfeb] dark:border-white/10 text-xs text-[#52495d] dark:text-slate-300 hover:text-purple-600 dark:hover:text-cyan-400 hover:border-purple-300 dark:hover:border-cyan-500/30 flex items-center space-x-1.5 shadow-sm transition-all"
               >
                 <span>Candidate Signals</span>
               </button>
@@ -556,14 +565,14 @@ const InterviewRunner = () => {
                   >
                     {/* Avatar */}
                     {isInterviewer ? (
-                      <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shrink-0 mt-1 shadow-md">
+                      <div className="w-9 h-9 rounded-xl bg-purple-100 dark:bg-cyan-500/20 border border-purple-200 dark:border-cyan-500/40 flex items-center justify-center text-purple-600 dark:text-cyan-400 shrink-0 mt-1 shadow-sm">
                         <Brain className="w-4 h-4" />
                       </div>
                     ) : (
                       <img
                         src={candidate.avatar}
                         alt={candidate.name}
-                        className="w-9 h-9 rounded-xl object-cover border-2 border-indigo-500/50 shrink-0 mt-1 shadow-md"
+                        className="w-9 h-9 rounded-xl object-cover border-2 border-purple-400 dark:border-indigo-500/50 shrink-0 mt-1 shadow-sm"
                       />
                     )}
 
@@ -571,25 +580,25 @@ const InterviewRunner = () => {
                     <div
                       className={`max-w-[88%] rounded-2xl p-4 text-sm leading-relaxed ${
                         !isInterviewer
-                          ? "bg-gradient-to-br from-indigo-600 to-purple-700 text-white shadow-lg shadow-indigo-500/20"
-                          : "bg-slate-900/95 border border-white/10 text-slate-100 shadow-md"
+                          ? "bg-gradient-to-br from-purple-600 to-indigo-700 text-white shadow-md shadow-purple-600/15"
+                          : "bg-white dark:bg-slate-900/95 border border-[#e5dfeb] dark:border-white/10 text-[#191522] dark:text-slate-100 shadow-sm"
                       }`}
                     >
                       {/* Interviewer Message Header / Badges */}
                       {isInterviewer && (
-                        <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-white/10">
+                        <div className="flex items-center justify-between gap-2 mb-2 pb-2 border-b border-[#e5dfeb] dark:border-white/10">
                           <div className="flex items-center space-x-1.5">
-                            <span className="text-xs font-mono font-bold text-cyan-400 uppercase">
+                            <span className="text-xs font-mono font-bold text-purple-700 dark:text-cyan-400 uppercase">
                               AI Technical Interviewer
                             </span>
                             {msg.dayNumber && (
-                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-white/5 text-slate-300 font-mono">
+                              <span className="text-[10px] px-2 py-0.5 rounded-md bg-purple-50 dark:bg-white/5 text-[#706879] dark:text-slate-300 font-mono">
                                 Day {msg.dayNumber}
                               </span>
                             )}
                           </div>
                           {msg.isFollowUp && (
-                            <span className="flex items-center space-x-1 text-[10px] font-black uppercase text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-500/30">
+                            <span className="flex items-center space-x-1 text-[10px] font-black uppercase text-rose-700 dark:text-rose-400 bg-rose-100 dark:bg-rose-500/10 px-2 py-0.5 rounded-full border border-rose-200 dark:border-rose-500/30">
                               <Zap className="w-3 h-3" />
                               <span>Adaptive Probe</span>
                             </span>
@@ -599,7 +608,7 @@ const InterviewRunner = () => {
 
                       {/* Candidate Name Tag */}
                       {!isInterviewer && (
-                        <div className="text-[11px] font-mono font-bold text-indigo-200 uppercase mb-1">
+                        <div className="text-[11px] font-mono font-bold text-purple-200 uppercase mb-1">
                           {candidate.name} (Candidate Response)
                         </div>
                       )}
@@ -608,9 +617,9 @@ const InterviewRunner = () => {
                       {isInterviewer ? (
                         <div className="space-y-2">
                           {details?.greeting && (
-                            <p className="text-xs text-slate-300 font-sans">{details.greeting}</p>
+                            <p className="text-xs text-[#52495d] dark:text-slate-300 font-sans">{details.greeting}</p>
                           )}
-                          <div className="p-3 rounded-xl bg-slate-950/80 border border-cyan-500/20 text-cyan-50 font-medium text-sm leading-relaxed">
+                          <div className="p-3 rounded-xl bg-purple-50/70 dark:bg-slate-950/80 border border-purple-200 dark:border-cyan-500/20 text-[#191522] dark:text-cyan-50 font-medium text-sm leading-relaxed">
                             {details?.question || msg.text}
                           </div>
                         </div>
@@ -620,9 +629,9 @@ const InterviewRunner = () => {
 
                       {/* Attached Code Snippet if any */}
                       {msg.code && (
-                        <div className="mt-3 p-3 rounded-xl bg-slate-950 border border-white/10 font-mono text-xs text-cyan-300 overflow-x-auto">
-                          <div className="flex items-center space-x-1 text-[10px] uppercase font-bold text-slate-400 mb-1 border-b border-white/10 pb-1">
-                            <Code2 className="w-3 h-3 text-cyan-400" />
+                        <div className="mt-3 p-3 rounded-xl bg-[#fcfbfd] dark:bg-slate-950 border border-[#e5dfeb] dark:border-white/10 font-mono text-xs text-[#191522] dark:text-cyan-300 overflow-x-auto">
+                          <div className="flex items-center space-x-1 text-[10px] uppercase font-bold text-[#706879] dark:text-slate-400 mb-1 border-b border-[#e5dfeb] dark:border-white/10 pb-1">
+                            <Code2 className="w-3 h-3 text-purple-600 dark:text-cyan-400" />
                             <span>Submitted Code Implementation</span>
                           </div>
                           <pre>{msg.code}</pre>
@@ -636,11 +645,11 @@ const InterviewRunner = () => {
               {/* Live Thinking indicator */}
               {isThinking && (
                 <div className="flex items-center space-x-3 animate-in fade-in">
-                  <div className="w-9 h-9 rounded-xl bg-cyan-500/20 border border-cyan-500/40 flex items-center justify-center text-cyan-400 shadow-md">
+                  <div className="w-9 h-9 rounded-xl bg-purple-100 dark:bg-cyan-500/20 border border-purple-200 dark:border-cyan-500/40 flex items-center justify-center text-purple-600 dark:text-cyan-400 shadow-sm">
                     <RefreshCw className="w-4 h-4 animate-spin" />
                   </div>
-                  <div className="bg-slate-900/90 border border-cyan-500/30 p-3.5 rounded-2xl text-xs text-cyan-300 font-mono flex items-center space-x-2.5">
-                    <div className="w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                  <div className="bg-white dark:bg-slate-900/90 border border-purple-200 dark:border-cyan-500/30 p-3.5 rounded-2xl text-xs text-purple-800 dark:text-cyan-300 font-mono flex items-center space-x-2.5 shadow-sm">
+                    <div className="w-2 h-2 rounded-full bg-purple-600 dark:bg-cyan-400 animate-ping" />
                     <span>Evaluating response against 31-day curriculum rubrics & formulating next probe...</span>
                   </div>
                 </div>
@@ -650,7 +659,7 @@ const InterviewRunner = () => {
             </div>
 
             {/* Input Response Box */}
-            <div className="mt-4 pt-4 border-t border-white/10 space-y-3">
+            <div className="mt-4 pt-4 border-t border-[#e5dfeb] dark:border-white/10 space-y-3">
               <div className="relative">
                 <textarea
                   value={answerText}
@@ -662,7 +671,7 @@ const InterviewRunner = () => {
                     }
                   }}
                   placeholder="Explain your architectural reasoning, trade-offs, and failure mode mitigations... (Cmd+Enter / Ctrl+Enter to submit)"
-                  className="w-full h-24 p-3.5 rounded-2xl bg-slate-950/90 border border-white/10 text-white text-xs sm:text-sm font-sans placeholder-slate-500 focus:border-cyan-400 focus:outline-none resize-none transition-all shadow-inner"
+                  className="w-full h-24 p-3.5 rounded-2xl bg-[#fcfbfd] dark:bg-slate-950/90 border border-[#e5dfeb] dark:border-white/10 text-[#191522] dark:text-white text-xs sm:text-sm font-sans placeholder-[#9c94a4] dark:placeholder-slate-500 focus:border-purple-500 dark:focus:border-cyan-400 focus:outline-none resize-none transition-all shadow-inner"
                 />
               </div>
 
@@ -674,8 +683,8 @@ const InterviewRunner = () => {
                     onClick={toggleRecording}
                     className={`p-2.5 rounded-xl border text-xs font-bold transition-all flex items-center space-x-1.5 ${
                       isRecording
-                        ? "bg-rose-500/20 border-rose-500 text-rose-400 animate-pulse"
-                        : "bg-slate-900 border-white/10 text-slate-400 hover:text-white"
+                        ? "bg-rose-100 dark:bg-rose-500/20 border-rose-300 dark:border-rose-500 text-rose-700 dark:text-rose-400 animate-pulse"
+                        : "bg-white dark:bg-slate-900 border-[#e5dfeb] dark:border-white/10 text-[#706879] dark:text-slate-400 hover:text-[#191522] dark:hover:text-white shadow-sm"
                     }`}
                     title="Toggle Audio Recording Transcription"
                   >
@@ -688,8 +697,8 @@ const InterviewRunner = () => {
                     onClick={() => setShowCodeEditor(!showCodeEditor)}
                     className={`p-2.5 rounded-xl border text-xs font-bold transition-all flex items-center space-x-1.5 ${
                       showCodeEditor
-                        ? "bg-cyan-500/10 border-cyan-500/30 text-cyan-400"
-                        : "bg-slate-900 border-white/10 text-slate-400 hover:text-white"
+                        ? "bg-purple-100 dark:bg-cyan-500/10 border-purple-300 dark:border-cyan-500/30 text-purple-700 dark:text-cyan-400"
+                        : "bg-white dark:bg-slate-900 border-[#e5dfeb] dark:border-white/10 text-[#706879] dark:text-slate-400 hover:text-[#191522] dark:hover:text-white shadow-sm"
                     }`}
                   >
                     <Code2 className="w-4 h-4" />
@@ -702,10 +711,10 @@ const InterviewRunner = () => {
                     type="button"
                     onClick={handleSubmitAnswer}
                     disabled={isThinking || (!answerText.trim() && !codeContent.trim())}
-                    className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-indigo-600 hover:from-cyan-400 hover:to-indigo-500 disabled:opacity-50 text-slate-950 font-black text-xs uppercase tracking-wider shadow-lg shadow-cyan-500/20 active:scale-95 transition-all cursor-pointer"
+                    className="flex items-center space-x-2 px-5 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 dark:from-cyan-500 dark:to-indigo-600 dark:hover:from-cyan-400 dark:hover:to-indigo-500 disabled:opacity-50 text-white dark:text-slate-950 font-extrabold text-xs uppercase tracking-wider shadow-ia-purple dark:shadow-cyan-500/20 active:scale-95 transition-all cursor-pointer"
                   >
                     <span>Submit Turn</span>
-                    <Send className="w-3.5 h-3.5 text-slate-950" />
+                    <Send className="w-3.5 h-3.5 text-white dark:text-slate-950" />
                   </button>
                 </div>
               </div>
@@ -718,9 +727,9 @@ const InterviewRunner = () => {
           <div className="flex justify-end pt-2">
             <button
               onClick={handleFinishInterview}
-              className="flex items-center space-x-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-black text-xs uppercase tracking-wider shadow-xl shadow-emerald-500/20 active:scale-95 transition-all"
+              className="flex items-center space-x-2 px-6 py-3 rounded-2xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 dark:from-emerald-500 dark:to-teal-600 dark:hover:from-emerald-400 dark:hover:to-teal-500 text-white dark:text-slate-950 font-extrabold text-xs uppercase tracking-wider shadow-lg active:scale-95 transition-all"
             >
-              <Award className="w-4 h-4 text-slate-950" />
+              <Award className="w-4 h-4 text-white dark:text-slate-950" />
               <span>Conclude Interview & Generate Structured Report</span>
             </button>
           </div>
@@ -732,11 +741,11 @@ const InterviewRunner = () => {
           
           {/* Integrated Monaco Code Editor */}
           {showCodeEditor && (
-            <div className="glass-panel rounded-3xl p-5 border border-white/10 shadow-2xl space-y-3">
-              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <div className="glass-panel rounded-3xl p-5 border border-[#e5dfeb] dark:border-white/10 shadow-ia-card dark:shadow-2xl space-y-3">
+              <div className="flex items-center justify-between border-b border-[#e5dfeb] dark:border-white/10 pb-3">
                 <div className="flex items-center space-x-2">
-                  <Code2 className="w-4 h-4 text-cyan-400" />
-                  <span className="text-xs font-mono font-bold text-white uppercase">
+                  <Code2 className="w-4 h-4 text-purple-600 dark:text-cyan-400" />
+                  <span className="text-xs font-mono font-bold text-[#191522] dark:text-white uppercase">
                     Interactive Code Sandbox
                   </span>
                 </div>
@@ -747,7 +756,7 @@ const InterviewRunner = () => {
                     setSelectedLanguage(e.target.value);
                     setCodeContent(DEFAULT_CODE_TEMPLATES[e.target.value] || "");
                   }}
-                  className="px-2.5 py-1 rounded-xl bg-slate-900 border border-white/10 text-cyan-300 text-xs font-mono focus:outline-none"
+                  className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-900 border border-[#e5dfeb] dark:border-white/10 text-purple-700 dark:text-cyan-300 text-xs font-mono focus:outline-none shadow-sm"
                 >
                   {SUPPORTED_LANGUAGES.map((lang) => (
                     <option key={lang.value} value={lang.value}>
@@ -757,12 +766,12 @@ const InterviewRunner = () => {
                 </select>
               </div>
 
-              {/* Monaco Editor Component */}
-              <div className="rounded-2xl overflow-hidden border border-white/10 h-[380px] bg-slate-950">
+              {/* Monaco Editor Component (Switches vs-light and vs-dark dynamically) */}
+              <div className="rounded-2xl overflow-hidden border border-[#e5dfeb] dark:border-white/10 h-[380px] bg-white dark:bg-slate-950 shadow-inner">
                 <MonacoEditor
                   height="100%"
                   language={selectedLanguage}
-                  theme="vs-dark"
+                  theme={isDark ? "vs-dark" : "vs-light"}
                   value={codeContent}
                   onChange={(val) => setCodeContent(val || "")}
                   options={{
@@ -775,11 +784,11 @@ const InterviewRunner = () => {
                 />
               </div>
 
-              <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+              <div className="flex items-center justify-between text-[11px] text-[#706879] dark:text-slate-400 font-mono">
                 <span>Code included automatically in answer turn</span>
                 <button
                   onClick={() => setCodeContent(DEFAULT_CODE_TEMPLATES[selectedLanguage] || "")}
-                  className="hover:text-cyan-400 transition-colors"
+                  className="hover:text-purple-600 dark:hover:text-cyan-400 transition-colors"
                 >
                   Reset Template
                 </button>
@@ -788,31 +797,31 @@ const InterviewRunner = () => {
           )}
 
           {/* Candidate Profile Quick Dossier */}
-          <div className="glass-panel rounded-3xl p-5 border border-white/10 shadow-2xl space-y-4">
+          <div className="glass-panel rounded-3xl p-5 border border-[#e5dfeb] dark:border-white/10 shadow-ia-card dark:shadow-2xl space-y-4">
             <div className="flex items-center space-x-3">
               <img
                 src={candidate.avatar}
                 alt={candidate.name}
-                className="w-11 h-11 rounded-2xl object-cover border border-cyan-400/40"
+                className="w-11 h-11 rounded-2xl object-cover border border-purple-200 dark:border-cyan-400/40 shadow-sm"
               />
               <div className="min-w-0 flex-1">
-                <h4 className="text-sm font-bold text-white truncate font-mono">{candidate.name}</h4>
-                <p className="text-[11px] text-cyan-400 truncate">{candidate.cohortTrack}</p>
-                <p className="text-[10px] text-slate-400">{candidate.experienceLevel}</p>
+                <h4 className="text-sm font-extrabold text-[#191522] dark:text-white truncate font-heading">{candidate.name}</h4>
+                <p className="text-[11px] text-purple-600 dark:text-cyan-400 truncate font-semibold">{candidate.cohortTrack}</p>
+                <p className="text-[10px] text-[#706879] dark:text-slate-400">{candidate.experienceLevel}</p>
               </div>
             </div>
 
-            <div className="p-3 rounded-2xl bg-slate-950/60 border border-white/5 space-y-2 text-xs">
-              <p className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">
+            <div className="p-3 rounded-2xl bg-[#fcfbfd] dark:bg-slate-950/60 border border-[#e5dfeb] dark:border-white/5 space-y-2 text-xs">
+              <p className="text-[10px] uppercase font-bold text-[#706879] dark:text-slate-400 tracking-wider">
                 Cohort Learning Signals
               </p>
-              <div className="space-y-1 text-slate-300 text-[11px]">
-                <div className="flex items-start space-x-1.5 text-emerald-300">
-                  <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-400" />
+              <div className="space-y-1 text-[11px]">
+                <div className="flex items-start space-x-1.5 text-emerald-700 dark:text-emerald-300">
+                  <CheckCircle2 className="w-3.5 h-3.5 mt-0.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
                   <span>{candidate.learningSignals?.strengths?.[0] || "Demonstrates strong foundational execution in AI systems."}</span>
                 </div>
-                <div className="flex items-start space-x-1.5 text-rose-300">
-                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-rose-400" />
+                <div className="flex items-start space-x-1.5 text-rose-700 dark:text-rose-300">
+                  <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-rose-600 dark:text-rose-400" />
                   <span>{candidate.learningSignals?.vulnerabilities?.[0] || "Needs probing on edge cases and latency SLAs."}</span>
                 </div>
               </div>
